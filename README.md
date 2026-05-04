@@ -123,10 +123,10 @@ for Zero-shot Motion Transfer
 
 ## Getting started
 
-This code was tested on `Ubuntu 18.04.5 LTS` and requires:
+This code now targets:
 
-* Python 3.7
-* conda3 or miniconda3
+* Python 3.14
+* [uv](https://docs.astral.sh/uv/)
 * CUDA capable GPU (one is enough)
 
 ### 1. Setup environment
@@ -139,13 +139,14 @@ sudo apt install ffmpeg
 ```
 For windows use [this](https://www.geeksforgeeks.org/how-to-install-ffmpeg-on-windows/) instead.
 
-Setup conda env:
+Setup uv environment:
 ```shell
-conda env create -f environment.yml
-conda activate mdm
-python -m spacy download en_core_web_sm
-pip install git+https://github.com/openai/CLIP.git
+uv sync
+uv run python -m spacy download en_core_web_sm
 ```
+
+The legacy `environment.yml` is kept for reference only. New installs should use
+`pyproject.toml` and `uv`.
 
 Download dependencies:
 
