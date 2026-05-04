@@ -1,3 +1,5 @@
+from functools import partial
+
 from torch.utils.data import DataLoader
 from data_loaders.tensors import collate as all_collate
 from data_loaders.tensors import t2m_collate, t2m_prefix_collate
@@ -27,8 +29,8 @@ def get_collate_fn(name, hml_mode='train', pred_len=0, batch_size=1):
         return t2m_eval_collate
     if name in ["humanml", "kit"]:
         if pred_len > 0:
-            return lambda x: t2m_prefix_collate(x, pred_len=pred_len)
-        return lambda x: t2m_collate(x, batch_size)
+            return partial(t2m_prefix_collate, pred_len=pred_len)
+        return partial(t2m_collate, batch_size=batch_size)
     else:
         return all_collate
 
