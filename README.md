@@ -145,6 +145,10 @@ uv sync
 uv run python -m spacy download en_core_web_sm
 ```
 
+The spaCy model is installed with spaCy's model alias so spaCy can select a
+compatible model package without hardcoding a release wheel URL in
+`pyproject.toml`.
+
 The legacy `environment.yml` is kept for reference only. New installs should use
 `pyproject.toml` and `uv`.
 
