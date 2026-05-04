@@ -15,7 +15,6 @@ authors = [
 ]
 dependencies = [
   "blobfile>=3.0",
-  "chumpy>=0.70",
   "click>=8.3",
   "ffmpeg-python>=0.2",
   "ftfy>=6.3",

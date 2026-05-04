@@ -6,6 +6,7 @@ import contextlib
 
 from smplx import SMPLLayer as _SMPLLayer
 from smplx.lbs import vertices2joints
+from smplx.utils import Struct
 
 
 # action2motion_joints = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 21, 24, 38]
@@ -60,12 +61,19 @@ JOINT_NAMES = [
 ]
 
 
+def _load_smpl_npz(model_path):
+    with np.load(model_path) as smpl_data:
+        return Struct(**{key: smpl_data[key] for key in smpl_data.files})
+
+
 # adapted from VIBE/SPIN to output smpl_joints, vibe joints and action2motion joints
 class SMPL(_SMPLLayer):
     """ Extension of the official SMPL implementation to support more joints """
 
     def __init__(self, model_path=SMPL_MODEL_PATH, **kwargs):
         kwargs["model_path"] = model_path
+        if str(model_path).endswith(".npz"):
+            kwargs["data_struct"] = _load_smpl_npz(model_path)
 
         # remove the verbosity for the 10-shapes beta parameters
         with contextlib.redirect_stdout(None):
