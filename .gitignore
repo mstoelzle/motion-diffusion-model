@@ -134,6 +134,9 @@ t2m/
 body_models/
 glove/
 kit
+dataset/HumanML3D
+dataset/t2m_test.npy
+dataset/t2m_train.npy
 slurm**/
 *.out
 *.err
