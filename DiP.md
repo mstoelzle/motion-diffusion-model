@@ -174,11 +174,11 @@ To reproduce DiP, run:
 
 
 ```shell
-python -m train.train_mdm\
---save_dir save/my_humanml_DiP \
---dataset humanml --arch trans_dec --text_encoder_type bert \
---diffusion_steps 10 --context_len 20 --pred_len 40 \
---mask_frames --use_ema --autoregressive --gen_guidance_param 7.5
+python -m train.train_mdm \
+   --save_dir save/my_humanml_DiP \
+   --dataset humanml --arch trans_dec --text_encoder_type bert \
+   --diffusion_steps 10 --context_len 20 --pred_len 40 \
+   --mask_frames --use_ema --autoregressive --gen_guidance_param 7.5
 ```
 
 
