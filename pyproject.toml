@@ -61,8 +61,18 @@ replicate = [
 [tool.uv]
 package = true
 
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
 [tool.uv.extra-build-dependencies]
 chumpy = ["pip"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.setuptools.packages.find]
 where = ["."]
