@@ -111,11 +111,12 @@ class TrainLoop:
                                             split=args.eval_split,
                                             hml_mode='eval',
                                             autoregressive=args.autoregressive,
-                                            fixed_len=args.context_len+args.pred_len, pred_len=args.pred_len, device=dist_util.dev())
+                                            fixed_len=args.context_len+args.pred_len, pred_len=args.pred_len,
+                                            device=dist_util.dev(), num_workers=args.num_workers)
 
             self.eval_gt_data = get_dataset_loader(name=args.dataset, batch_size=args.eval_batch_size, num_frames=None,
                                                    split=args.eval_split,
-                                                   hml_mode='gt', device=dist_util.dev())
+                                                   hml_mode='gt', device=dist_util.dev(), num_workers=args.num_workers)
             self.eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
             self.eval_data = {
                 'test': lambda: eval_humanml.get_mdm_loader(self.args,
@@ -213,8 +214,8 @@ class TrainLoop:
                     break
                 
                 self.cond_modifiers(cond['y'], motion) # Modify in-place for efficiency
-                motion = motion.to(self.device)
-                cond['y'] = {key: val.to(self.device) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
+                motion = motion.to(self.device, non_blocking=True)
+                cond['y'] = {key: val.to(self.device, non_blocking=True) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
 
                 self.run_step(motion, cond)
                 if self.total_step() % self.log_interval == 0:

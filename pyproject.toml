@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdm"
+version = "0.1.0"
+description = "Human Motion Diffusion Model"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel Cohen-or, Amit Haim Bermano" },
+]
+dependencies = [
+  "blobfile>=3.0",
+  "click>=8.3",
+  "ffmpeg-python>=0.2",
+  "ftfy>=6.3",
+  "gdown>=5.2",
+  "h5py>=3.14",
+  "joblib>=1.5",
+  "lxml>=6.0",
+  "matplotlib>=3.10",
+  "moviepy>=1.0.3,<2.0",
+  "numpy>=2.3",
+  "clip @ git+https://github.com/openai/CLIP.git",
+  "pandas>=2.3",
+  "pillow>=11.3,<12.0",
+  "pycryptodomex>=3.23",
+  "pyyaml>=6.0",
+  "regex>=2025.11.3",
+  "requests>=2.32",
+  "scikit-learn>=1.8",
+  "scipy>=1.16",
+  "smplx>=0.1.28",
+  "spacy>=3.8",
+  "tokenizers>=0.22",
+  "torch==2.11.0",
+  "torchaudio==2.11.0",
+  "torchvision==0.26.0",
+  "tqdm>=4.67",
+  "transformers>=4.57",
+  "trimesh>=4.9",
+  "wandb>=0.23",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0",
+]
+logging = [
+  "clearml>=2.0",
+  "tensorboard>=2.20",
+]
+replicate = [
+  "cog>=0.16",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["pip"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "data_loaders*",
+  "diffusion*",
+  "eval*",
+  "model*",
+  "sample*",
+  "train*",
+  "utils*",
+  "visualize*",
+]
+namespaces = true

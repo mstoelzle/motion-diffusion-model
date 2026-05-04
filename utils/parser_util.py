@@ -170,6 +170,8 @@ def add_training_options(parser):
                        help="Training will stop after the specified number of steps.")
     group.add_argument("--num_frames", default=60, type=int,
                        help="Limit for the maximal number of frames. In HumanML3D and KIT this field is ignored.")
+    group.add_argument("--num_workers", default=8, type=int,
+                       help="Number of DataLoader worker processes. Set to 0 to disable multiprocessing.")
     group.add_argument("--resume_checkpoint", default="", type=str,
                        help="If not empty, will start from the specified checkpoint (path to model###.pt file).")
     

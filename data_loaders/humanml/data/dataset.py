@@ -803,13 +803,32 @@ class HumanML3D(data.Dataset):
             self.t2m_dataset = Text2MotionDatasetV2(self.opt, self.mean, self.std, self.split_file, self.w_vectorizer)
             self.num_actions = 1 # dummy placeholder
 
-        self.mean_gpu = torch.tensor(self.mean).to(device)[None, :, None, None]
-        self.std_gpu = torch.tensor(self.std).to(device)[None, :, None, None]
+        self.device = device
+        self._mean_gpu = None
+        self._std_gpu = None
 
         assert len(self.t2m_dataset) > 1, 'You loaded an empty dataset, ' \
                                           'it is probably because your data dir has only texts and no motions.\n' \
                                           'To train and evaluate MDM you should get the FULL data as described ' \
                                           'in the README file.'
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state['_mean_gpu'] = None
+        state['_std_gpu'] = None
+        return state
+
+    @property
+    def mean_gpu(self):
+        if self._mean_gpu is None:
+            self._mean_gpu = torch.as_tensor(self.mean, device=self.device)[None, :, None, None]
+        return self._mean_gpu
+
+    @property
+    def std_gpu(self):
+        if self._std_gpu is None:
+            self._std_gpu = torch.as_tensor(self.std, device=self.device)[None, :, None, None]
+        return self._std_gpu
 
     def __getitem__(self, item):
         return self.t2m_dataset.__getitem__(item)
