@@ -47,7 +47,7 @@ def get_dataset(name, num_frames, split='train', hml_mode='train', abs_path='.',
 
 
 def get_dataset_loader(name, batch_size, num_frames, split='train', hml_mode='train', fixed_len=0, pred_len=0, 
-                       device=None, autoregressive=False):
+                       device=None, autoregressive=False, num_workers=8):
     dataset = get_dataset(name, num_frames, split=split, hml_mode=hml_mode, fixed_len=fixed_len, 
                 device=device, autoregressive=autoregressive)
     
@@ -55,7 +55,9 @@ def get_dataset_loader(name, batch_size, num_frames, split='train', hml_mode='tr
 
     loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=True,
-        num_workers=8, drop_last=True, collate_fn=collate
+        num_workers=num_workers, drop_last=True, collate_fn=collate,
+        persistent_workers=num_workers > 0,
+        pin_memory=device is not None and device.type == 'cuda',
     )
 
     return loader
