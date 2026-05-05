@@ -47,6 +47,10 @@ def get_model_args(args, data):
         data_rep = 'hml_vec'
         njoints = 251
         nfeats = 1
+    elif args.dataset == 'lafan_g1':
+        data_rep = 'g1_vec'
+        njoints = data.dataset.feature_dim
+        nfeats = 1
 
     # Compatibility with old models
     if not hasattr(args, 'pred_len'):
@@ -91,6 +95,17 @@ def create_gaussian_diffusion(args):
         lambda_target_loc = args.lambda_target_loc
     else:
         lambda_target_loc = 0.
+    
+    data_rep = 'rot6d'
+    if args.dataset in ['humanml', 'kit']:
+        data_rep = 'hml_vec'
+    elif args.dataset == 'lafan_g1':
+        data_rep = 'g1_vec'
+        if args.lambda_rcxyz or args.lambda_fc or lambda_target_loc:
+            print('lafan_g1 does not support SMPL/HumanML-specific geometric losses; disabling them.')
+        args.lambda_rcxyz = 0.0
+        args.lambda_fc = 0.0
+        lambda_target_loc = 0.0
 
     return SpacedDiffusion(
         use_timesteps=space_timesteps(steps, timestep_respacing),
@@ -109,6 +124,7 @@ def create_gaussian_diffusion(args):
         ),
         loss_type=loss_type,
         rescale_timesteps=rescale_timesteps,
+        data_rep=data_rep,
         lambda_vel=args.lambda_vel,
         lambda_rcxyz=args.lambda_rcxyz,
         lambda_fc=args.lambda_fc,

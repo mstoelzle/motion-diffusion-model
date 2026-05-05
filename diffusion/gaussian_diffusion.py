@@ -1334,9 +1334,12 @@ class GaussianDiffusion:
             if self.lambda_vel > 0.:
                 target_vel = (target[..., 1:] - target[..., :-1])
                 model_output_vel = (model_output[..., 1:] - model_output[..., :-1])
-                terms["vel_mse"] = self.masked_l2(target_vel[:, :-1, :, :], # Remove last joint, is the root location!
-                                                  model_output_vel[:, :-1, :, :],
-                                                  mask[:, :, :, 1:])  # mean_flat((target_vel - model_output_vel) ** 2)
+                if self.data_rep == 'g1_vec':
+                    terms["vel_mse"] = self.masked_l2(target_vel, model_output_vel, mask[:, :, :, 1:])
+                else:
+                    terms["vel_mse"] = self.masked_l2(target_vel[:, :-1, :, :], # Remove last joint, is the root location!
+                                                      model_output_vel[:, :-1, :, :],
+                                                      mask[:, :, :, 1:])  # mean_flat((target_vel - model_output_vel) ** 2)
             
             if self.lambda_target_loc > 0.:
                 assert self.model_mean_type == ModelMeanType.START_X, 'This feature supports only X_start pred for now!'

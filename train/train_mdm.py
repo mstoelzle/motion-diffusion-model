@@ -44,12 +44,17 @@ def main():
                               fixed_len=args.pred_len + args.context_len, 
                               pred_len=args.pred_len,
                               device=dist_util.dev(),
-                              num_workers=args.num_workers,)
+                              num_workers=args.num_workers,
+                              data_dir=args.data_dir,
+                              motion_filter=args.motion_filter,)
+    if hasattr(data.dataset, "save_metadata"):
+        data.dataset.save_metadata(args.save_dir)
 
     print("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(args, data)
     model.to(dist_util.dev())
-    model.rot2xyz.smpl_model.eval()
+    if hasattr(model, "rot2xyz") and hasattr(model.rot2xyz, "smpl_model"):
+        model.rot2xyz.smpl_model.eval()
 
     print('Total params: %.2fM' % (sum(p.numel() for p in model.parameters_wo_clip()) / 1000000.0))
     print("Training...")

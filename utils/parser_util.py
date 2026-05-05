@@ -136,10 +136,12 @@ def add_model_options(parser):
 
 def add_data_options(parser):
     group = parser.add_argument_group('dataset')
-    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc'], type=str,
+    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'lafan_g1'], type=str,
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
+    group.add_argument("--motion_filter", default="*.npz", type=str,
+                       help="For lafan_g1, comma-separated filename patterns selecting motions to train on.")
 
 
 def add_training_options(parser):
