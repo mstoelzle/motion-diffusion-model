@@ -47,6 +47,7 @@ class MDM(nn.Module):
         self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
         self.mask_frames = kargs.get('mask_frames', False)
         self.arch = arch
+        self.text_encoder_type = kargs.get('text_encoder_type', 'clip')
         self.gru_emb_dim = self.latent_dim if self.arch == 'gru' else 0
         self.input_process = InputProcess(self.data_rep, self.input_feats+self.gru_emb_dim, self.latent_dim)
 
@@ -103,8 +104,6 @@ class MDM(nn.Module):
             if 'text' in self.cond_mode:
                 # We support CLIP encoder and DistilBERT
                 print('EMBED TEXT')
-                
-                self.text_encoder_type = kargs.get('text_encoder_type', 'clip')
                 
                 if self.text_encoder_type == "clip":
                     print('Loading CLIP...')
@@ -259,7 +258,9 @@ class MDM(nn.Module):
                 xseq = x
             xseq = self.sequence_pos_encoder(xseq)  # [seqlen+1, bs, d]
 
-            if self.text_encoder_type == 'clip':
+            if 'text' not in self.cond_mode:
+                output = self.seqTransDecoder(tgt=xseq, memory=emb, tgt_key_padding_mask=frames_mask)
+            elif self.text_encoder_type == 'clip':
                 output = self.seqTransDecoder(tgt=xseq, memory=emb, tgt_key_padding_mask=frames_mask)
             elif self.text_encoder_type == 'bert':
                 output = self.seqTransDecoder(tgt=xseq, memory=emb, memory_key_padding_mask=text_mask, tgt_key_padding_mask=frames_mask)  # Rotem's bug fix
@@ -344,7 +345,7 @@ class InputProcess(nn.Module):
         bs, njoints, nfeats, nframes = x.shape
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
 
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec']:
             x = self.poseEmbedding(x)  # [seqlen, bs, d]
             return x
         elif self.data_rep == 'rot_vel':
@@ -371,7 +372,7 @@ class OutputProcess(nn.Module):
 
     def forward(self, output):
         nframes, bs, d = output.shape
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec']:
             output = self.poseFinal(output)  # [seqlen, bs, 150]
         elif self.data_rep == 'rot_vel':
             first_pose = output[[0]]  # [1, bs, d]

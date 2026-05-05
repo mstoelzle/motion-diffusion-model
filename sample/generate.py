@@ -17,6 +17,7 @@ import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
 import shutil
 from data_loaders.tensors import collate
+from data_loaders.lafan_g1 import g1_vec_to_qpos
 from moviepy.editor import clips_array
 
 
@@ -29,8 +30,12 @@ def main(args=None):
     n_joints = 22 if args.dataset == 'humanml' else 21
     name = os.path.basename(os.path.dirname(args.model_path))
     niter = os.path.basename(args.model_path).replace('model', '').replace('.pt', '')
-    max_frames = 196 if args.dataset in ['kit', 'humanml'] else 60
-    fps = 12.5 if args.dataset == 'kit' else 20
+    if args.dataset == 'lafan_g1':
+        fps = 50
+        max_frames = max(args.context_len + args.pred_len, int(args.motion_length * fps))
+    else:
+        max_frames = 196 if args.dataset in ['kit', 'humanml'] else 60
+        fps = 12.5 if args.dataset == 'kit' else 20
     n_frames = min(max_frames, int(args.motion_length*fps))
     is_using_data = not any([args.input_text, args.text_prompt, args.action_file, args.action_name])
     if args.context_len > 0:
@@ -103,6 +108,10 @@ def main(args=None):
         input_motion = input_motion.to(dist_util.dev())
         if texts is not None:
             model_kwargs['y']['text'] = texts
+        if args.action_name:
+            action = data.dataset.action_name_to_action([args.action_name] * args.num_samples)
+            model_kwargs['y']['action'] = torch.as_tensor(action).unsqueeze(1)
+            model_kwargs['y']['action_text'] = [args.action_name] * args.num_samples
     else:
         collate_args = [{'inp': torch.zeros(n_frames), 'tokens': None, 'lengths': n_frames}] * args.num_samples
         is_t2m = any([args.input_text, args.text_prompt])
@@ -122,6 +131,7 @@ def main(args=None):
     all_motions = []
     all_lengths = []
     all_text = []
+    all_g1_vec = []
 
     # add CFG scale to batch
     if args.guidance_param != 1:
@@ -156,6 +166,33 @@ def main(args=None):
             noise=None,
             const_noise=False,
         )
+
+        if model.data_rep == 'g1_vec':
+            sample_vec = sample.detach().cpu().squeeze(2).permute(0, 2, 1).numpy()
+            sample_vec = data.dataset.inv_transform(sample_vec)
+            sample_qpos = np.stack([
+                g1_vec_to_qpos(
+                    one_sample,
+                    fps=data.dataset.fps,
+                    clamp_joint_bounds=(data.dataset.joint_pos_min, data.dataset.joint_pos_max),
+                )
+                for one_sample in sample_vec
+            ], axis=0)
+
+            if args.unconstrained:
+                all_text += ['unconstrained'] * args.num_samples
+            else:
+                text_key = 'text' if 'text' in model_kwargs['y'] else 'action_text'
+                all_text += model_kwargs['y'][text_key]
+
+            all_motions.append(sample_qpos)
+            all_g1_vec.append(sample_vec)
+            _len = model_kwargs['y']['lengths'].cpu().numpy()
+            if 'prefix' in model_kwargs['y'].keys():
+                _len[:] = sample_qpos.shape[1]
+            all_lengths.append(_len)
+            print(f"created {len(all_motions) * args.batch_size} samples")
+            continue
 
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == 'hml_vec':
@@ -196,9 +233,16 @@ def main(args=None):
 
     npy_path = os.path.join(out_path, 'results.npy')
     print(f"saving results file to [{npy_path}]")
-    np.save(npy_path,
-            {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
-             'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions})
+    results = {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
+               'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions}
+    if args.dataset == 'lafan_g1':
+        results.update({
+            'motion_format': 'g1_qpos',
+            'g1_vec': np.concatenate(all_g1_vec, axis=0)[:total_num_samples],
+            'fps': data.dataset.fps,
+            'joint_names': data.dataset.joint_names,
+        })
+    np.save(npy_path, results)
     if args.dynamic_text_path != '':
         text_file_content = '\n'.join(['#'.join(s) for s in all_text])
     else:
@@ -207,6 +251,11 @@ def main(args=None):
         fw.write(text_file_content)
     with open(npy_path.replace('.npy', '_len.txt'), 'w') as fw:
         fw.write('\n'.join([str(l) for l in all_lengths]))
+
+    if args.dataset == 'lafan_g1':
+        abs_path = os.path.abspath(out_path)
+        print(f'[Done] G1 qpos results are at [{abs_path}]')
+        return out_path
 
     print(f"saving visualizations to [{out_path}]...")
     skeleton = paramUtil.kit_kinematic_chain if args.dataset == 'kit' else paramUtil.t2m_kinematic_chain
@@ -306,7 +355,8 @@ def load_dataset(args, max_frames, n_frames):
                               num_frames=max_frames,
                               split='test',
                               hml_mode='train' if args.pred_len > 0 else 'text_only',  # We need to sample a prefix from the dataset
-                              fixed_len=args.pred_len + args.context_len, pred_len=args.pred_len, device=dist_util.dev())
+                              fixed_len=args.pred_len + args.context_len, pred_len=args.pred_len, device=dist_util.dev(),
+                              data_dir=args.data_dir, motion_filter=args.motion_filter)
     data.fixed_length = n_frames
     return data
 

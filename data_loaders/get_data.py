@@ -20,6 +20,9 @@ def get_dataset_class(name):
     elif name == "kit":
         from data_loaders.humanml.data.dataset import KIT
         return KIT
+    elif name == "lafan_g1":
+        from data_loaders.lafan_g1 import LAFANG1
+        return LAFANG1
     else:
         raise ValueError(f'Unsupported dataset name [{name}]')
 
@@ -36,20 +39,24 @@ def get_collate_fn(name, hml_mode='train', pred_len=0, batch_size=1):
 
 
 def get_dataset(name, num_frames, split='train', hml_mode='train', abs_path='.', fixed_len=0, 
-                device=None, autoregressive=False, cache_path=None): 
+                device=None, autoregressive=False, cache_path=None, pred_len=0, motion_filter='*.npz'): 
     DATA = get_dataset_class(name)
     if name in ["humanml", "kit"]:
         dataset = DATA(split=split, num_frames=num_frames, mode=hml_mode, abs_path=abs_path, fixed_len=fixed_len, 
                        device=device, autoregressive=autoregressive)
+    elif name == "lafan_g1":
+        dataset = DATA(split=split, num_frames=num_frames, data_dir=abs_path, fixed_len=fixed_len,
+                       pred_len=pred_len, motion_filter=motion_filter)
     else:
         dataset = DATA(split=split, num_frames=num_frames)
     return dataset
 
 
 def get_dataset_loader(name, batch_size, num_frames, split='train', hml_mode='train', fixed_len=0, pred_len=0, 
-                       device=None, autoregressive=False, num_workers=8):
+                       device=None, autoregressive=False, num_workers=8, data_dir='', motion_filter='*.npz'):
     dataset = get_dataset(name, num_frames, split=split, hml_mode=hml_mode, fixed_len=fixed_len, 
-                device=device, autoregressive=autoregressive)
+                device=device, autoregressive=autoregressive, abs_path=data_dir, pred_len=pred_len,
+                motion_filter=motion_filter)
     
     collate = get_collate_fn(name, hml_mode, pred_len, batch_size)
 
