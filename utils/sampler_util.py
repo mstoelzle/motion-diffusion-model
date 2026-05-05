@@ -22,7 +22,8 @@ class ClassifierFreeSampleModel(nn.Module):
         self.nfeats = self.model.nfeats
         self.data_rep = self.model.data_rep
         self.cond_mode = self.model.cond_mode
-        self.encode_text = self.model.encode_text
+        if hasattr(self.model, 'encode_text'):
+            self.encode_text = self.model.encode_text
 
     def forward(self, x, timesteps, y=None):
         cond_mode = self.model.cond_mode
@@ -49,7 +50,10 @@ class AutoRegressiveSampler():
         n_iterations = (self.required_frames // self.args.pred_len) + int(self.required_frames % self.args.pred_len > 0)
         samples_buf = []
         cur_prefix = deepcopy(kargs['model_kwargs']['y']['prefix'])  # init with data
-        dynamic_text_mode = type(kargs['model_kwargs']['y']['text'][0]) == list  # Text changes on the fly - prompt per prediction is provided as a list (instead of a single prompt)
+        dynamic_text_mode = (
+            'text' in kargs['model_kwargs']['y']
+            and type(kargs['model_kwargs']['y']['text'][0]) == list
+        )  # Text changes on the fly - prompt per prediction is provided as a list (instead of a single prompt)
         if self.args.autoregressive_include_prefix:
             samples_buf.append(cur_prefix)
         autoregressive_shape = list(deepcopy(shape))
