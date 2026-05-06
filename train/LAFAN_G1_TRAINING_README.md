@@ -24,12 +24,16 @@ python -m train.train_mdm \
   --pred_len 40 \
   --mask_frames \
   --use_ema \
+  --train_platform_type TensorboardPlatform \
+  --log_interval 1000 \
   --autoregressive \
   --gen_guidance_param 7.5
 ```
 
 This trains on all `.npz` files in `dataset/lafan_g1`. If you keep the data
 somewhere else, pass that location explicitly with `--data_dir /path/to/lafan_g1`.
+`TensorboardPlatform` writes loss scalars into the save directory so convergence
+curves can be plotted after training.
 
 ## Debug/Subsample Training
 
@@ -47,6 +51,8 @@ python -m train.train_mdm \
   --pred_len 40 \
   --mask_frames \
   --use_ema \
+  --train_platform_type TensorboardPlatform \
+  --log_interval 1000 \
   --autoregressive \
   --gen_guidance_param 7.5
 ```
@@ -76,8 +82,27 @@ The training save directory contains:
 - `model*.pt`: model checkpoints
 - `opt*.pt`: optimizer checkpoints
 - `args.json`: training arguments
+- `events.out.tfevents.*`: TensorBoard scalar logs, including training losses
 - `lafan_g1_mean.npy` and `lafan_g1_std.npy`: normalization statistics
 - `lafan_g1_metadata.json`: feature layout, joint names, labels, FPS, and bounds
+
+## Loss Curves
+
+With `--train_platform_type TensorboardPlatform`, scalar losses are logged under
+the `Loss/` namespace every `--log_interval` training steps. Launch TensorBoard
+from the repo root with:
+
+```bash
+tensorboard --logdir save/my_g1_lafan_DiP
+```
+
+Then open the printed local URL and view the `Loss/loss`, `Loss/rot_mse`, and
+other scalar curves. If `tensorboard` is not installed in the active
+environment, install it first:
+
+```bash
+python -m pip install tensorboard
+```
 
 ## Generate Samples
 
