@@ -42,9 +42,9 @@ on dance motions:
 
 ```bash
 python -m train.train_mdm \
-  --save_dir save/debug_g1_lafan_dance_DiP \
+  --save_dir save/my_g1_lafan_fightAndSports1_subject4_DiP \
   --dataset lafan_g1 \
-  --motion_filter "dance*.npz" \
+  --motion_filter "fightAndSports1_subject4*.npz" \
   --arch trans_dec \
   --diffusion_steps 10 \
   --context_len 20 \
