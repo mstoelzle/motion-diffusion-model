@@ -28,17 +28,17 @@ exported file contains:
 
 ```bash
 python -m visualize.export_lafan_g1_to_viser \
-  --results_path save/debug_g1_lafan_dance_DiP/samples_600000_g1_dance/results.npy \
-  --output_dir save/debug_g1_lafan_dance_DiP/samples_600000_g1_dance/viser_npz \
+  --results_path save/my_g1_lafan_DiP/samples_600000_g1_fightAndSports/results.npy \
+  --output_dir save/my_g1_lafan_DiP/samples_600000_g1_fightAndSports/viser_npz \
   --all
 ```
 
 This writes files named like:
 
 ```text
-sample00_rep00_dance.npz
-sample01_rep00_dance.npz
-sample00_rep01_dance.npz
+sample00_rep00_fightAndSports.npz
+sample01_rep00_fightAndSports.npz
+sample00_rep01_fightAndSports.npz
 ```
 
 ## Open In HoloSoma Viser
@@ -50,7 +50,7 @@ cd ~/src/holosoma/src/holosoma_retargeting/holosoma_retargeting
 
 python viser_player.py \
   --robot_urdf models/g1/g1_29dof.urdf \
-  --qpos_npz /home/maxi/src/motion-diffusion-model/save/debug_g1_lafan_dance_DiP/samples_600000_g1_dance/viser_npz/sample00_rep00_dance.npz
+  --qpos_npz /home/maxi/src/motion-diffusion-model/save/my_g1_lafan_DiP/samples_600000_g1_fightAndSports/viser_npz/sample00_rep00_fightAndSports.npz
 ```
 
 `viser_player.py` visualizes exactly one `.npz` at a time. To view a different

@@ -233,6 +233,13 @@ def add_generate_options(parser):
                        help="A text prompt to be generated. If empty, will take text prompts from dataset.")
     group.add_argument("--action_name", default='', type=str,
                        help="An action name to be generated. If empty, will take text prompts from dataset.")
+    group.add_argument("--prefix_motion_filter", default='', type=str,
+                       help="For lafan_g1 prefix completion, comma-separated filename patterns selecting which dataset files can provide the initial prefix. "
+                            "This is sampling-only and does not change training normalization.")
+    group.add_argument("--prefix_file", default='', type=str,
+                       help="For lafan_g1 prefix completion, exact dataset filename or absolute path to use for the initial prefix.")
+    group.add_argument("--prefix_start", default=-1, type=int,
+                       help="For lafan_g1 prefix completion, start frame of the initial prefix window. If negative, a valid start is sampled.")
     group.add_argument("--target_joint_names", default='DIMP_FINAL', type=str, help="Force single joint configuration by specifing the joints (coma separated). If None - will use the random mode for all end effectors.")
 
 

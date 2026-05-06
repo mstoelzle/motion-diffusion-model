@@ -69,8 +69,7 @@ def main(args=None):
         texts = [s.replace('\n', '') for s in texts]
         n_frames = len(texts) * args.pred_len  # each text prompt is for a single prediction
     elif args.action_name:
-        action_text = [args.action_name]
-        args.num_samples = 1
+        action_text = [args.action_name] * args.num_samples
     elif args.action_file != '':
         assert os.path.exists(args.action_file)
         with open(args.action_file, 'r') as fr:
@@ -82,6 +81,12 @@ def main(args=None):
 
     print('Loading dataset...')
     data = load_dataset(args, max_frames, n_frames)
+    if is_using_data and args.dataset == 'lafan_g1' and len(data.dataset) < args.batch_size:
+        raise ValueError(
+            f"Only {len(data.dataset)} lafan_g1 prefix windows match the sampling prefix selector, "
+            f"but --num_samples is {args.batch_size}. Use fewer samples or a broader "
+            f"--prefix_motion_filter/--prefix_file/--prefix_start selection."
+        )
     total_num_samples = args.num_samples * args.num_repetitions
 
     print("Creating model and diffusion...")
@@ -112,6 +117,8 @@ def main(args=None):
             action = data.dataset.action_name_to_action([args.action_name] * args.num_samples)
             model_kwargs['y']['action'] = torch.as_tensor(action).unsqueeze(1)
             model_kwargs['y']['action_text'] = [args.action_name] * args.num_samples
+        if args.dataset == 'lafan_g1' and 'db_key' in model_kwargs['y']:
+            print(f"Using prefix windows: {model_kwargs['y']['db_key']}")
     else:
         collate_args = [{'inp': torch.zeros(n_frames), 'tokens': None, 'lengths': n_frames}] * args.num_samples
         is_t2m = any([args.input_text, args.text_prompt])
@@ -132,6 +139,7 @@ def main(args=None):
     all_lengths = []
     all_text = []
     all_g1_vec = []
+    all_prefix_sources = []
 
     # add CFG scale to batch
     if args.guidance_param != 1:
@@ -187,6 +195,7 @@ def main(args=None):
 
             all_motions.append(sample_qpos)
             all_g1_vec.append(sample_vec)
+            all_prefix_sources += model_kwargs['y'].get('db_key', [''] * args.num_samples)
             _len = model_kwargs['y']['lengths'].cpu().numpy()
             if 'prefix' in model_kwargs['y'].keys():
                 _len[:] = sample_qpos.shape[1]
@@ -241,6 +250,7 @@ def main(args=None):
             'g1_vec': np.concatenate(all_g1_vec, axis=0)[:total_num_samples],
             'fps': data.dataset.fps,
             'joint_names': data.dataset.joint_names,
+            'prefix_sources': all_prefix_sources[:total_num_samples],
         })
     np.save(npy_path, results)
     if args.dynamic_text_path != '':
@@ -356,7 +366,10 @@ def load_dataset(args, max_frames, n_frames):
                               split='test',
                               hml_mode='train' if args.pred_len > 0 else 'text_only',  # We need to sample a prefix from the dataset
                               fixed_len=args.pred_len + args.context_len, pred_len=args.pred_len, device=dist_util.dev(),
-                              data_dir=args.data_dir, motion_filter=args.motion_filter)
+                              data_dir=args.data_dir, motion_filter=args.motion_filter,
+                              prefix_motion_filter=getattr(args, 'prefix_motion_filter', ''),
+                              prefix_file=getattr(args, 'prefix_file', ''),
+                              prefix_start=getattr(args, 'prefix_start', -1))
     data.fixed_length = n_frames
     return data
 

@@ -52,6 +52,21 @@ def filter_motion_paths(data_dir, motion_filter="*.npz"):
     return paths
 
 
+def matches_motion_filter(path, motion_filter):
+    patterns = expand_motion_filter(motion_filter)
+    return any(fnmatch.fnmatch(Path(path).name, pattern) for pattern in patterns)
+
+
+def matches_motion_file(path, motion_file):
+    if not motion_file:
+        return True
+    path = Path(path)
+    motion_file = Path(motion_file).expanduser()
+    if motion_file.is_absolute():
+        return path.resolve() == motion_file.resolve()
+    return path.name == motion_file.name
+
+
 def quat_normalize(q):
     q = np.asarray(q, dtype=np.float64)
     norm = np.linalg.norm(q, axis=-1, keepdims=True)
@@ -257,12 +272,18 @@ class LAFANG1(torch.utils.data.Dataset):
         fixed_len=0,
         pred_len=0,
         motion_filter="*.npz",
+        prefix_motion_filter="",
+        prefix_file="",
+        prefix_start=-1,
         **_kwargs,
     ):
         super().__init__()
         self.split = split
         self.data_dir = Path(data_dir or DEFAULT_LAFAN_G1_DIR).expanduser()
         self.motion_filter = motion_filter
+        self.prefix_motion_filter = prefix_motion_filter
+        self.prefix_file = prefix_file
+        self.prefix_start = int(prefix_start)
         self.fixed_len = int(fixed_len or num_frames or 60)
         self.pred_len = int(pred_len or 0)
         self.context_len = self.fixed_len - self.pred_len if self.pred_len > 0 else 0
@@ -317,13 +338,31 @@ class LAFANG1(torch.utils.data.Dataset):
                 }
             )
             all_features.append(features)
+
+            use_for_prefix = True
+            if self.prefix_motion_filter:
+                use_for_prefix = matches_motion_filter(path, self.prefix_motion_filter)
+            if use_for_prefix and self.prefix_file:
+                use_for_prefix = matches_motion_file(path, self.prefix_file)
+            if not use_for_prefix:
+                continue
+
             max_start = features.shape[0] - self.fixed_len
-            for start in range(max_start + 1):
-                self.index.append((motion_idx, start))
+            if self.prefix_start >= 0:
+                if self.prefix_start > max_start:
+                    raise ValueError(
+                        f"Requested prefix_start={self.prefix_start} for {path.name}, "
+                        f"but valid starts are 0..{max_start}"
+                    )
+                self.index.append((motion_idx, self.prefix_start))
+            else:
+                for start in range(max_start + 1):
+                    self.index.append((motion_idx, start))
 
         if not self.index:
             raise ValueError(
-                f"No motions in [{self.data_dir}] are at least {self.fixed_len} frames long"
+                f"No prefix windows matched prefix_motion_filter=[{self.prefix_motion_filter or '*'}], "
+                f"prefix_file=[{self.prefix_file or '*'}] in [{self.data_dir}] with fixed_len={self.fixed_len}"
             )
 
         stacked = np.concatenate(all_features, axis=0)
@@ -389,6 +428,9 @@ class LAFANG1(torch.utils.data.Dataset):
         metadata = {
             "data_dir": str(self.data_dir),
             "motion_filter": self.motion_filter,
+            "prefix_motion_filter": self.prefix_motion_filter,
+            "prefix_file": self.prefix_file,
+            "prefix_start": self.prefix_start,
             "num_motions": len(self.motion_paths),
             "num_windows": len(self.index),
             "fps": self.fps,

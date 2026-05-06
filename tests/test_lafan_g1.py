@@ -142,3 +142,34 @@ def test_dataset_prefix_normalization_and_metadata(tmp_path):
     metadata = json.loads((tmp_path / "lafan_g1_metadata.json").read_text())
     assert metadata["feature_dim"] == 39
     assert metadata["joint_names"] == JOINT_NAMES
+
+
+def test_dataset_prefix_file_selection_keeps_full_normalization(tmp_path):
+    _write_motion(tmp_path / "dance2_subject1_mj_fps50.npz")
+    _write_motion(tmp_path / "jumps1_subject2_mj_fps50.npz", yaw_offset=0.3)
+
+    full_dataset = LAFANG1(data_dir=tmp_path, fixed_len=6, pred_len=2)
+    prefix_dataset = LAFANG1(
+        data_dir=tmp_path,
+        fixed_len=6,
+        pred_len=2,
+        prefix_motion_filter="dance*.npz",
+        prefix_start=1,
+    )
+
+    assert len(prefix_dataset.motion_paths) == 2
+    assert len(prefix_dataset) == 1
+    assert prefix_dataset[0]["key"] == "dance2_subject1_mj_fps50:1"
+    assert prefix_dataset[0]["action_text"] == "dance"
+    assert np.allclose(prefix_dataset.mean, full_dataset.mean)
+    assert np.allclose(prefix_dataset.std, full_dataset.std)
+
+    exact_file_dataset = LAFANG1(
+        data_dir=tmp_path,
+        fixed_len=6,
+        pred_len=2,
+        prefix_file="jumps1_subject2_mj_fps50.npz",
+    )
+
+    assert len(exact_file_dataset) == 3
+    assert all(exact_file_dataset[i]["key"].startswith("jumps1_subject2_mj_fps50:") for i in range(3))
