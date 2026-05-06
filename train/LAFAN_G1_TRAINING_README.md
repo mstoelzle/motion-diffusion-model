@@ -1,4 +1,4 @@
-# Train MDM on G1-Retargeted LAFAN
+# Train and Sample MDM on G1-Retargeted LAFAN
 
 The `lafan_g1` dataset trains on retargeted LAFAN motions saved as G1 robot
 `.npz` files. By default it uses all matching `.npz` files from the configured
@@ -78,3 +78,65 @@ The training save directory contains:
 - `args.json`: training arguments
 - `lafan_g1_mean.npy` and `lafan_g1_std.npy`: normalization statistics
 - `lafan_g1_metadata.json`: feature layout, joint names, labels, FPS, and bounds
+
+## Generate Samples
+
+After training `save/my_g1_lafan_DiP`, generate samples from a checkpoint with:
+
+```bash
+python -m sample.generate \
+  --model_path save/my_g1_lafan_DiP/model000600000.pt \
+  --output_dir save/my_g1_lafan_DiP/samples_600000_g1 \
+  --num_samples 6 \
+  --num_repetitions 3 \
+  --motion_length 6.0 \
+  --autoregressive \
+  --guidance_param 7.5
+```
+
+Replace `model000600000.pt` with the checkpoint you want to sample. With
+`--motion_length 6.0`, the generated motions are 6 seconds long at the dataset
+FPS.
+
+To condition on a specific filename-derived LAFAN action label, pass
+`--action_name`:
+
+```bash
+python -m sample.generate \
+  --model_path save/my_g1_lafan_DiP/model000600000.pt \
+  --output_dir save/my_g1_lafan_DiP/samples_600000_g1_dance \
+  --action_name dance \
+  --num_repetitions 3 \
+  --motion_length 6.0 \
+  --autoregressive \
+  --guidance_param 7.5
+```
+
+For `lafan_g1`, `sample.generate` writes robot samples directly to
+`results.npy` in the output directory. The `motion` array stores reconstructed
+G1 qpos with shape `(num_outputs, frames, 36)`, and the file also stores the
+sample FPS.
+
+To visualize a generated sample with HoloSoma's `viser_player.py`, first export
+one sample/repetition pair to a viser `.npz`:
+
+```bash
+python -m visualize.export_lafan_g1_to_viser \
+  --results_path save/my_g1_lafan_DiP/samples_600000_g1/results.npy \
+  --output_path save/my_g1_lafan_DiP/samples_600000_g1/viser_sample00_rep00.npz \
+  --sample_idx 0 \
+  --rep_idx 0
+```
+
+Then open the exported `.npz` from the HoloSoma retargeting repo:
+
+```bash
+cd ~/src/holosoma/src/holosoma_retargeting/holosoma_retargeting
+
+python viser_player.py \
+  --robot_urdf models/g1/g1_29dof.urdf \
+  --qpos_npz /home/maxi/src/motion-diffusion-model/save/my_g1_lafan_DiP/samples_600000_g1/viser_sample00_rep00.npz
+```
+
+See `visualize/LAFAN_G1_VISER_README.md` for exporting all samples and choosing
+different sample/repetition indices.
