@@ -47,7 +47,7 @@ def get_model_args(args, data):
         data_rep = 'hml_vec'
         njoints = 251
         nfeats = 1
-    elif args.dataset == 'lafan_g1':
+    elif args.dataset in ['lafan_g1', 'latent_tennis_g1']:
         data_rep = 'g1_vec'
         njoints = data.dataset.feature_dim
         nfeats = 1
@@ -99,10 +99,10 @@ def create_gaussian_diffusion(args):
     data_rep = 'rot6d'
     if args.dataset in ['humanml', 'kit']:
         data_rep = 'hml_vec'
-    elif args.dataset == 'lafan_g1':
+    elif args.dataset in ['lafan_g1', 'latent_tennis_g1']:
         data_rep = 'g1_vec'
         if args.lambda_rcxyz or args.lambda_fc or lambda_target_loc:
-            print('lafan_g1 does not support SMPL/HumanML-specific geometric losses; disabling them.')
+            print(f'{args.dataset} does not support SMPL/HumanML-specific geometric losses; disabling them.')
         args.lambda_rcxyz = 0.0
         args.lambda_fc = 0.0
         lambda_target_loc = 0.0

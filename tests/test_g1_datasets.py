@@ -2,8 +2,10 @@ import json
 
 import numpy as np
 
-from data_loaders.lafan_g1 import (
+from data_loaders.g1 import (
+    G1MotionDataset,
     LAFANG1,
+    LatentTennisG1,
     filter_motion_paths,
     g1_vec_to_qpos,
     parse_lafan_action,
@@ -78,6 +80,21 @@ def _write_motion(path, num_frames=8, yaw_offset=0.0):
         body_ang_vel_w=np.zeros((num_frames, 51, 3)),
         joint_names=np.array(JOINT_NAMES),
         body_names=np.array([f"body_{i}" for i in range(51)]),
+    )
+    return joint_pos, joint_vel
+
+
+def _write_latent_tennis_motion(path, num_frames=8, yaw_offset=0.0):
+    joint_pos, joint_vel = _write_motion(path, num_frames=num_frames, yaw_offset=yaw_offset)
+    path.unlink()
+    np.savez(
+        path,
+        qpos=joint_pos,
+        qvel=joint_vel,
+        frequency=np.array(50.0),
+        split_points=np.array([0, num_frames], dtype=np.int32),
+        joint_names=np.array(["root"] + JOINT_NAMES),
+        body_names=np.array([f"body_{i}" for i in range(31)]),
     )
     return joint_pos, joint_vel
 
@@ -173,3 +190,31 @@ def test_dataset_prefix_file_selection_keeps_full_normalization(tmp_path):
 
     assert len(exact_file_dataset) == 3
     assert all(exact_file_dataset[i]["key"].startswith("jumps1_subject2_mj_fps50:") for i in range(3))
+
+
+def test_latent_tennis_g1_uses_g1_vec_schema_from_nested_qpos_files(tmp_path):
+    player_dir = tmp_path / "p1"
+    player_dir.mkdir()
+    _write_latent_tennis_motion(player_dir / "Random_001_Tennis 001.npz")
+    _write_latent_tennis_motion(player_dir / "Random_002_Tennis 001.npz", yaw_offset=0.3)
+
+    dataset = LatentTennisG1(data_dir=tmp_path, fixed_len=6)
+
+    assert len(dataset.motion_paths) == 2
+    assert dataset.dataname == "latent_tennis_g1"
+    assert dataset.num_actions == 1
+    assert dataset.action_to_action_name(0) == "tennis"
+    assert dataset.feature_dim == 39
+    assert dataset.joint_names == JOINT_NAMES
+
+    item = dataset[0]
+    assert item["inp"].shape == (39, 1, 6)
+    assert item["lengths"] == 6
+    assert item["action_text"] == "tennis"
+
+    dataset.save_metadata(tmp_path)
+    metadata = json.loads((tmp_path / "latent_tennis_g1_metadata.json").read_text())
+    assert metadata["feature_dim"] == 39
+    assert metadata["joint_names"] == JOINT_NAMES
+    assert issubclass(LAFANG1, G1MotionDataset)
+    assert issubclass(LatentTennisG1, G1MotionDataset)

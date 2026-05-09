@@ -1,16 +1,30 @@
 import fnmatch
 import json
-import math
 import re
 from pathlib import Path
 
 import numpy as np
 import torch
 
+from utils.rotation_conversions_np import (
+    matrix_to_quaternion,
+    matrix_to_rotation_6d,
+    quaternion_invert,
+    quaternion_raw_multiply,
+    quaternion_normalize,
+    quaternion_to_matrix,
+    quaternion_to_yaw,
+    rotate_xy_by_inverse_yaw,
+    rotate_xy_by_yaw,
+    rotation_6d_to_matrix,
+    yaw_to_quaternion,
+)
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_LAFAN_G1_DIR = str(_REPO_ROOT / "dataset" / "lafan_g1")
+DEFAULT_LATENT_TENNIS_G1_DIR = str(_REPO_ROOT / "dataset" / "latent_tennis_g1")
 DEFAULT_G1_ROBOT_MODEL = str(_REPO_ROOT / "body_models" / "g1" / "g1_29dof.urdf")
 
 FEATURE_LAYOUT = {
@@ -38,11 +52,14 @@ def expand_motion_filter(motion_filter):
     return [pattern.strip() for pattern in motion_filter.split(",") if pattern.strip()]
 
 
-def filter_motion_paths(data_dir, motion_filter="*.npz"):
-    data_dir = Path(data_dir or DEFAULT_LAFAN_G1_DIR).expanduser()
+def filter_motion_paths(data_dir, motion_filter="*.npz", recursive=False):
+    if not data_dir:
+        raise ValueError("data_dir must be specified for G1 motion path filtering")
+    data_dir = Path(data_dir).expanduser()
     patterns = expand_motion_filter(motion_filter)
+    glob_pattern = "**/*.npz" if recursive else "*.npz"
     paths = sorted(
-        path for path in data_dir.glob("*.npz")
+        path for path in data_dir.glob(glob_pattern)
         if any(fnmatch.fnmatch(path.name, pattern) for pattern in patterns)
     )
     if not paths:
@@ -67,134 +84,26 @@ def matches_motion_file(path, motion_file):
     return path.name == motion_file.name
 
 
-def quat_normalize(q):
-    q = np.asarray(q, dtype=np.float64)
-    norm = np.linalg.norm(q, axis=-1, keepdims=True)
-    return q / np.maximum(norm, 1e-12)
+def parse_latent_tennis_action(_path_or_name):
+    return "tennis"
 
 
-def quat_conjugate(q):
-    out = np.asarray(q, dtype=np.float64).copy()
-    out[..., 1:] *= -1.0
-    return out
+def _first_existing(data, keys, path):
+    for key in keys:
+        if key in data:
+            return data[key]
+    raise KeyError(f"Expected one of {keys} in [{path}]")
 
 
-def quat_mul(a, b):
-    a = np.asarray(a, dtype=np.float64)
-    b = np.asarray(b, dtype=np.float64)
-    aw, ax, ay, az = np.moveaxis(a, -1, 0)
-    bw, bx, by, bz = np.moveaxis(b, -1, 0)
-    return np.stack(
-        [
-            aw * bw - ax * bx - ay * by - az * bz,
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-        ],
-        axis=-1,
-    )
-
-
-def quat_to_yaw(q):
-    q = quat_normalize(q)
-    w, x, y, z = np.moveaxis(q, -1, 0)
-    return np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-
-
-def yaw_to_quat(yaw):
-    yaw = np.asarray(yaw, dtype=np.float64)
-    half = yaw * 0.5
-    return np.stack(
-        [np.cos(half), np.zeros_like(half), np.zeros_like(half), np.sin(half)],
-        axis=-1,
-    )
-
-
-def rotate_xy_by_yaw(xy, yaw):
-    c = np.cos(yaw)
-    s = np.sin(yaw)
-    x = xy[..., 0]
-    y = xy[..., 1]
-    return np.stack([c * x - s * y, s * x + c * y], axis=-1)
-
-
-def rotate_xy_by_inverse_yaw(xy, yaw):
-    return rotate_xy_by_yaw(xy, -yaw)
-
-
-def quat_to_matrix(q):
-    q = quat_normalize(q)
-    w, x, y, z = np.moveaxis(q, -1, 0)
-    ww, xx, yy, zz = w * w, x * x, y * y, z * z
-    wx, wy, wz = w * x, w * y, w * z
-    xy, xz, yz = x * y, x * z, y * z
-    return np.stack(
-        [
-            np.stack([ww + xx - yy - zz, 2 * (xy - wz), 2 * (xz + wy)], axis=-1),
-            np.stack([2 * (xy + wz), ww - xx + yy - zz, 2 * (yz - wx)], axis=-1),
-            np.stack([2 * (xz - wy), 2 * (yz + wx), ww - xx - yy + zz], axis=-1),
-        ],
-        axis=-2,
-    )
-
-
-def matrix_to_quat(matrix):
-    m = np.asarray(matrix, dtype=np.float64)
-    flat = m.reshape(-1, 3, 3)
-    out = np.empty((flat.shape[0], 4), dtype=np.float64)
-    for i, mat in enumerate(flat):
-        trace = np.trace(mat)
-        if trace > 0.0:
-            s = math.sqrt(trace + 1.0) * 2.0
-            out[i] = [
-                0.25 * s,
-                (mat[2, 1] - mat[1, 2]) / s,
-                (mat[0, 2] - mat[2, 0]) / s,
-                (mat[1, 0] - mat[0, 1]) / s,
-            ]
-        else:
-            axis = int(np.argmax(np.diag(mat)))
-            if axis == 0:
-                s = math.sqrt(1.0 + mat[0, 0] - mat[1, 1] - mat[2, 2]) * 2.0
-                out[i] = [
-                    (mat[2, 1] - mat[1, 2]) / s,
-                    0.25 * s,
-                    (mat[0, 1] + mat[1, 0]) / s,
-                    (mat[0, 2] + mat[2, 0]) / s,
-                ]
-            elif axis == 1:
-                s = math.sqrt(1.0 + mat[1, 1] - mat[0, 0] - mat[2, 2]) * 2.0
-                out[i] = [
-                    (mat[0, 2] - mat[2, 0]) / s,
-                    (mat[0, 1] + mat[1, 0]) / s,
-                    0.25 * s,
-                    (mat[1, 2] + mat[2, 1]) / s,
-                ]
-            else:
-                s = math.sqrt(1.0 + mat[2, 2] - mat[0, 0] - mat[1, 1]) * 2.0
-                out[i] = [
-                    (mat[1, 0] - mat[0, 1]) / s,
-                    (mat[0, 2] + mat[2, 0]) / s,
-                    (mat[1, 2] + mat[2, 1]) / s,
-                    0.25 * s,
-                ]
-    return quat_normalize(out.reshape(m.shape[:-2] + (4,)))
-
-
-def matrix_to_rotation_6d(matrix):
-    return np.asarray(matrix, dtype=np.float64)[..., :2, :].reshape(*matrix.shape[:-2], 6)
-
-
-def rotation_6d_to_matrix(d6):
-    d6 = np.asarray(d6, dtype=np.float64)
-    a1 = d6[..., 0:3]
-    a2 = d6[..., 3:6]
-    b1 = a1 / np.maximum(np.linalg.norm(a1, axis=-1, keepdims=True), 1e-12)
-    dot = np.sum(b1 * a2, axis=-1, keepdims=True)
-    b2 = a2 - dot * b1
-    b2 = b2 / np.maximum(np.linalg.norm(b2, axis=-1, keepdims=True), 1e-12)
-    b3 = np.cross(b1, b2)
-    return np.stack([b1, b2, b3], axis=-2)
+def load_g1_motion_arrays(path):
+    data = np.load(path, allow_pickle=True)
+    joint_pos = _first_existing(data, ("joint_pos", "qpos"), path)
+    joint_vel = _first_existing(data, ("joint_vel", "qvel"), path)
+    fps = float(np.asarray(_first_existing(data, ("fps", "frequency"), path)).reshape(-1)[0])
+    joint_names = _first_existing(data, ("joint_names",), path).tolist()
+    if joint_names and joint_names[0] == "root":
+        joint_names = joint_names[1:]
+    return joint_pos, joint_vel, joint_names, fps
 
 
 def qpos_qvel_to_g1_vec(joint_pos, joint_vel):
@@ -205,11 +114,11 @@ def qpos_qvel_to_g1_vec(joint_pos, joint_vel):
     if joint_vel.ndim != 2 or joint_vel.shape[1] != 35:
         raise ValueError(f"Expected joint_vel shape (T, 35), got {joint_vel.shape}")
 
-    root_quat = quat_normalize(joint_pos[:, 3:7])
-    yaw = quat_to_yaw(root_quat)
-    yaw_quat = yaw_to_quat(yaw)
-    residual_quat = quat_mul(quat_conjugate(yaw_quat), root_quat)
-    residual_6d = matrix_to_rotation_6d(quat_to_matrix(residual_quat))
+    root_quaternion = quaternion_normalize(joint_pos[:, 3:7])
+    yaw = quaternion_to_yaw(root_quaternion)
+    yaw_quaternion = yaw_to_quaternion(yaw)
+    residual_quaternion = quaternion_raw_multiply(quaternion_invert(yaw_quaternion), root_quaternion)
+    residual_6d = matrix_to_rotation_6d(quaternion_to_matrix(residual_quaternion))
 
     root_local_xy_velocity = rotate_xy_by_inverse_yaw(joint_vel[:, 0:2], yaw)
     root_yaw_velocity = joint_vel[:, 5:6]
@@ -255,14 +164,17 @@ def g1_vec_to_qpos(vec, fps=50.0, init_xy=None, init_yaw=0.0, clamp_joint_bounds
     for i in range(1, vec.shape[0]):
         xy[i] = xy[i - 1] + rotate_xy_by_yaw(local_xy_vel[i - 1], yaw[i - 1]) * dt
 
-    residual_quat = matrix_to_quat(rotation_6d_to_matrix(residual_6d))
-    root_quat = quat_normalize(quat_mul(yaw_to_quat(yaw), residual_quat))
+    residual_quaternion = matrix_to_quaternion(rotation_6d_to_matrix(residual_6d))
+    root_quaternion = quaternion_normalize(quaternion_raw_multiply(yaw_to_quaternion(yaw), residual_quaternion))
     root_xyz = np.column_stack([xy, root_height])
-    return np.concatenate([root_xyz, root_quat, joint_angles], axis=-1).astype(np.float32)
+    return np.concatenate([root_xyz, root_quaternion, joint_angles], axis=-1).astype(np.float32)
 
 
-class LAFANG1(torch.utils.data.Dataset):
-    dataname = "lafan_g1"
+class G1MotionDataset(torch.utils.data.Dataset):
+    dataname = "g1"
+    default_data_dir = ""
+    metadata_stem = "g1"
+    recursive_motion_paths = False
 
     def __init__(
         self,
@@ -279,7 +191,7 @@ class LAFANG1(torch.utils.data.Dataset):
     ):
         super().__init__()
         self.split = split
-        self.data_dir = Path(data_dir or DEFAULT_LAFAN_G1_DIR).expanduser()
+        self.data_dir = Path(data_dir or self.default_data_dir).expanduser()
         self.motion_filter = motion_filter
         self.prefix_motion_filter = prefix_motion_filter
         self.prefix_file = prefix_file
@@ -293,10 +205,14 @@ class LAFANG1(torch.utils.data.Dataset):
                 f"pred_len={self.pred_len}"
             )
 
-        self.motion_paths = filter_motion_paths(self.data_dir, self.motion_filter)
+        self.motion_paths = filter_motion_paths(
+            self.data_dir,
+            self.motion_filter,
+            recursive=self.recursive_motion_paths,
+        )
         self.motions = []
         self.index = []
-        labels = sorted({parse_lafan_action(path.name) for path in self.motion_paths})
+        labels = sorted({self.parse_action(path) for path in self.motion_paths})
         self._action_classes = labels
         self._action_to_label = {action: idx for idx, action in enumerate(labels)}
         self._label_to_action = {idx: action for action, idx in self._action_to_label.items()}
@@ -306,11 +222,7 @@ class LAFANG1(torch.utils.data.Dataset):
         fps_values = set()
         joint_names_ref = None
         for motion_idx, path in enumerate(self.motion_paths):
-            data = np.load(path, allow_pickle=True)
-            joint_pos = data["joint_pos"]
-            joint_vel = data["joint_vel"]
-            joint_names = data["joint_names"].tolist()
-            fps = float(np.asarray(data["fps"]).reshape(-1)[0])
+            joint_pos, joint_vel, joint_names, fps = load_g1_motion_arrays(path)
             fps_values.add(fps)
 
             if joint_pos.shape[1] != 36 or joint_vel.shape[1] != 35 or len(joint_names) != 29:
@@ -324,7 +236,7 @@ class LAFANG1(torch.utils.data.Dataset):
                 raise ValueError(f"Joint name order differs in {path}")
 
             features = qpos_qvel_to_g1_vec(joint_pos, joint_vel)
-            action_name = parse_lafan_action(path.name)
+            action_name = self.parse_action(path)
             action = self._action_to_label[action_name]
             self.motions.append(
                 {
@@ -390,6 +302,9 @@ class LAFANG1(torch.utils.data.Dataset):
     def action_to_action_name(self, action):
         return self.label_to_action(action)
 
+    def parse_action(self, path):
+        raise NotImplementedError
+
     def inv_transform(self, data):
         return data * self.std + self.mean
 
@@ -423,8 +338,8 @@ class LAFANG1(torch.utils.data.Dataset):
 
     def save_metadata(self, save_dir):
         save_dir = Path(save_dir)
-        np.save(save_dir / "lafan_g1_mean.npy", self.mean)
-        np.save(save_dir / "lafan_g1_std.npy", self.std)
+        np.save(save_dir / f"{self.metadata_stem}_mean.npy", self.mean)
+        np.save(save_dir / f"{self.metadata_stem}_std.npy", self.std)
         metadata = {
             "data_dir": str(self.data_dir),
             "motion_filter": self.motion_filter,
@@ -446,5 +361,25 @@ class LAFANG1(torch.utils.data.Dataset):
             "joint_pos_min": self.joint_pos_min.tolist(),
             "joint_pos_max": self.joint_pos_max.tolist(),
         }
-        with open(save_dir / "lafan_g1_metadata.json", "w") as f:
+        with open(save_dir / f"{self.metadata_stem}_metadata.json", "w") as f:
             json.dump(metadata, f, indent=2, sort_keys=True)
+
+
+class LAFANG1(G1MotionDataset):
+    dataname = "lafan_g1"
+    default_data_dir = DEFAULT_LAFAN_G1_DIR
+    metadata_stem = "lafan_g1"
+    recursive_motion_paths = False
+
+    def parse_action(self, path):
+        return parse_lafan_action(path.name)
+
+
+class LatentTennisG1(G1MotionDataset):
+    dataname = "latent_tennis_g1"
+    default_data_dir = DEFAULT_LATENT_TENNIS_G1_DIR
+    metadata_stem = "latent_tennis_g1"
+    recursive_motion_paths = True
+
+    def parse_action(self, path):
+        return parse_latent_tennis_action(path.name)
