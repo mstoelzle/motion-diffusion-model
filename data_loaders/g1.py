@@ -106,13 +106,37 @@ def load_g1_motion_arrays(path):
     return joint_pos, joint_vel, joint_names, fps
 
 
-def qpos_qvel_to_g1_vec(joint_pos, joint_vel):
+def finite_difference_root_velocities(joint_pos, fps):
+    """Derive root-local XY and yaw velocities from consecutive qpos frames."""
+    joint_pos = np.asarray(joint_pos, dtype=np.float64)
+    if joint_pos.ndim != 2 or joint_pos.shape[1] != 36:
+        raise ValueError(f"Expected joint_pos shape (T, 36), got {joint_pos.shape}")
+
+    root_quaternion = quaternion_normalize(joint_pos[:, 3:7])
+    yaw = np.unwrap(quaternion_to_yaw(root_quaternion))
+    dt = 1.0 / float(fps)
+    world_xy_velocity = np.zeros((joint_pos.shape[0], 2), dtype=np.float64)
+    root_yaw_velocity = np.zeros((joint_pos.shape[0], 1), dtype=np.float64)
+
+    if joint_pos.shape[0] > 1:
+        world_xy_velocity[:-1] = (joint_pos[1:, 0:2] - joint_pos[:-1, 0:2]) / dt
+        world_xy_velocity[-1] = world_xy_velocity[-2]
+        root_yaw_velocity[:-1, 0] = np.diff(yaw) / dt
+        root_yaw_velocity[-1] = root_yaw_velocity[-2]
+
+    root_local_xy_velocity = rotate_xy_by_inverse_yaw(world_xy_velocity, yaw)
+    return root_yaw_velocity, root_local_xy_velocity
+
+
+def qpos_qvel_to_g1_vec(joint_pos, joint_vel, fps=50.0, root_velocity_source="qvel"):
     joint_pos = np.asarray(joint_pos, dtype=np.float64)
     joint_vel = np.asarray(joint_vel, dtype=np.float64)
     if joint_pos.ndim != 2 or joint_pos.shape[1] != 36:
         raise ValueError(f"Expected joint_pos shape (T, 36), got {joint_pos.shape}")
     if joint_vel.ndim != 2 or joint_vel.shape[1] != 35:
         raise ValueError(f"Expected joint_vel shape (T, 35), got {joint_vel.shape}")
+    if root_velocity_source not in {"qvel", "finite_difference"}:
+        raise ValueError(f"Unsupported root_velocity_source [{root_velocity_source}]")
 
     root_quaternion = quaternion_normalize(joint_pos[:, 3:7])
     yaw = quaternion_to_yaw(root_quaternion)
@@ -120,8 +144,11 @@ def qpos_qvel_to_g1_vec(joint_pos, joint_vel):
     residual_quaternion = quaternion_raw_multiply(quaternion_invert(yaw_quaternion), root_quaternion)
     residual_6d = matrix_to_rotation_6d(quaternion_to_matrix(residual_quaternion))
 
-    root_local_xy_velocity = rotate_xy_by_inverse_yaw(joint_vel[:, 0:2], yaw)
-    root_yaw_velocity = joint_vel[:, 5:6]
+    if root_velocity_source == "finite_difference":
+        root_yaw_velocity, root_local_xy_velocity = finite_difference_root_velocities(joint_pos, fps)
+    else:
+        root_local_xy_velocity = rotate_xy_by_inverse_yaw(joint_vel[:, 0:2], yaw)
+        root_yaw_velocity = joint_vel[:, 5:6]
     root_height = joint_pos[:, 2:3]
     joint_angles = joint_pos[:, 7:]
 
@@ -175,6 +202,7 @@ class G1MotionDataset(torch.utils.data.Dataset):
     default_data_dir = ""
     metadata_stem = "g1"
     recursive_motion_paths = False
+    root_velocity_source = "qvel"
 
     def __init__(
         self,
@@ -235,7 +263,12 @@ class G1MotionDataset(torch.utils.data.Dataset):
             elif joint_names != joint_names_ref:
                 raise ValueError(f"Joint name order differs in {path}")
 
-            features = qpos_qvel_to_g1_vec(joint_pos, joint_vel)
+            features = qpos_qvel_to_g1_vec(
+                joint_pos,
+                joint_vel,
+                fps=fps,
+                root_velocity_source=self.root_velocity_source,
+            )
             action_name = self.parse_action(path)
             action = self._action_to_label[action_name]
             self.motions.append(
@@ -355,8 +388,8 @@ class G1MotionDataset(torch.utils.data.Dataset):
             "action_classes": self._action_classes,
             "robot_model": DEFAULT_G1_ROBOT_MODEL,
             "velocity_frame_convention": (
-                "root linear velocity from joint_vel[:,0:3] rotated by inverse root yaw; "
-                "yaw velocity from joint_vel[:,5]"
+                "root local XY velocity is expressed in the root-yaw frame; "
+                f"root velocity source is {self.root_velocity_source}"
             ),
             "joint_pos_min": self.joint_pos_min.tolist(),
             "joint_pos_max": self.joint_pos_max.tolist(),
@@ -380,6 +413,7 @@ class LatentTennisG1(G1MotionDataset):
     default_data_dir = DEFAULT_LATENT_TENNIS_G1_DIR
     metadata_stem = "latent_tennis_g1"
     recursive_motion_paths = True
+    root_velocity_source = "finite_difference"
 
     def parse_action(self, path):
         return parse_latent_tennis_action(path.name)

@@ -13,6 +13,11 @@ uses the same 39D `g1_vec` motion/trajectory representation as `lafan_g1`:
 root yaw velocity, root local XY velocity, root height, root orientation
 residual in 6D, and 29 G1 joint angles.
 
+The released LATENT tennis subset may contain zero-filled `qvel` arrays. For
+`latent_tennis_g1`, root XY and yaw velocities are therefore derived from
+finite differences of `qpos` at the dataset FPS before being converted to the
+same root-local `g1_vec` representation.
+
 ## What Unconstrained Means
 
 `--unconstrained` sets the model conditioning mode to `no_cond`. In this mode,
