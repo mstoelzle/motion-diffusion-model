@@ -136,12 +136,12 @@ def add_model_options(parser):
 
 def add_data_options(parser):
     group = parser.add_argument_group('dataset')
-    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'lafan_g1'], type=str,
+    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'lafan_g1', 'latent_tennis_g1'], type=str,
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
     group.add_argument("--motion_filter", default="*.npz", type=str,
-                       help="For lafan_g1, comma-separated filename patterns selecting motions to train on.")
+                       help="For G1 datasets, comma-separated filename patterns selecting motions to train on.")
 
 
 def add_training_options(parser):
@@ -234,12 +234,12 @@ def add_generate_options(parser):
     group.add_argument("--action_name", default='', type=str,
                        help="An action name to be generated. If empty, will take text prompts from dataset.")
     group.add_argument("--prefix_motion_filter", default='', type=str,
-                       help="For lafan_g1 prefix completion, comma-separated filename patterns selecting which dataset files can provide the initial prefix. "
+                       help="For G1 prefix completion, comma-separated filename patterns selecting which dataset files can provide the initial prefix. "
                             "This is sampling-only and does not change training normalization.")
     group.add_argument("--prefix_file", default='', type=str,
-                       help="For lafan_g1 prefix completion, exact dataset filename or absolute path to use for the initial prefix.")
+                       help="For G1 prefix completion, exact dataset filename or absolute path to use for the initial prefix.")
     group.add_argument("--prefix_start", default=-1, type=int,
-                       help="For lafan_g1 prefix completion, start frame of the initial prefix window. If negative, a valid start is sampled.")
+                       help="For G1 prefix completion, start frame of the initial prefix window. If negative, a valid start is sampled.")
     group.add_argument("--target_joint_names", default='DIMP_FINAL', type=str, help="Force single joint configuration by specifing the joints (coma separated). If None - will use the random mode for all end effectors.")
 
 

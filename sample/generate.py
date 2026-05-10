@@ -17,8 +17,10 @@ import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
 import shutil
 from data_loaders.tensors import collate
-from data_loaders.lafan_g1 import g1_vec_to_qpos
+from data_loaders.g1 import g1_vec_to_qpos
 from moviepy.editor import clips_array
+
+G1_DATASETS = {'lafan_g1', 'latent_tennis_g1'}
 
 
 def main(args=None):
@@ -30,7 +32,7 @@ def main(args=None):
     n_joints = 22 if args.dataset == 'humanml' else 21
     name = os.path.basename(os.path.dirname(args.model_path))
     niter = os.path.basename(args.model_path).replace('model', '').replace('.pt', '')
-    if args.dataset == 'lafan_g1':
+    if args.dataset in G1_DATASETS:
         fps = 50
         max_frames = max(args.context_len + args.pred_len, int(args.motion_length * fps))
     else:
@@ -81,9 +83,9 @@ def main(args=None):
 
     print('Loading dataset...')
     data = load_dataset(args, max_frames, n_frames)
-    if is_using_data and args.dataset == 'lafan_g1' and len(data.dataset) < args.batch_size:
+    if is_using_data and args.dataset in G1_DATASETS and len(data.dataset) < args.batch_size:
         raise ValueError(
-            f"Only {len(data.dataset)} lafan_g1 prefix windows match the sampling prefix selector, "
+            f"Only {len(data.dataset)} {args.dataset} prefix windows match the sampling prefix selector, "
             f"but --num_samples is {args.batch_size}. Use fewer samples or a broader "
             f"--prefix_motion_filter/--prefix_file/--prefix_start selection."
         )
@@ -100,7 +102,10 @@ def main(args=None):
     print(f"Loading checkpoints from [{args.model_path}]...")
     load_saved_model(model, args.model_path, use_avg=args.use_ema)
 
-    if args.guidance_param != 1:
+    use_cfg = args.guidance_param != 1 and model.cond_mode != 'no_cond'
+    if args.guidance_param != 1 and model.cond_mode == 'no_cond':
+        print('Ignoring classifier-free guidance for an unconstrained no_cond model.')
+    if use_cfg:
         model = ClassifierFreeSampleModel(model)   # wrapping model with the classifier-free sampler
     model.to(dist_util.dev())
     model.eval()  # disable random masking
@@ -117,7 +122,7 @@ def main(args=None):
             action = data.dataset.action_name_to_action([args.action_name] * args.num_samples)
             model_kwargs['y']['action'] = torch.as_tensor(action).unsqueeze(1)
             model_kwargs['y']['action_text'] = [args.action_name] * args.num_samples
-        if args.dataset == 'lafan_g1' and 'db_key' in model_kwargs['y']:
+        if args.dataset in G1_DATASETS and 'db_key' in model_kwargs['y']:
             print(f"Using prefix windows: {model_kwargs['y']['db_key']}")
     else:
         collate_args = [{'inp': torch.zeros(n_frames), 'tokens': None, 'lengths': n_frames}] * args.num_samples
@@ -142,7 +147,7 @@ def main(args=None):
     all_prefix_sources = []
 
     # add CFG scale to batch
-    if args.guidance_param != 1:
+    if use_cfg:
         model_kwargs['y']['scale'] = torch.ones(args.batch_size, device=dist_util.dev()) * args.guidance_param
     
     if 'text' in model_kwargs['y'].keys():
@@ -244,7 +249,7 @@ def main(args=None):
     print(f"saving results file to [{npy_path}]")
     results = {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
                'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions}
-    if args.dataset == 'lafan_g1':
+    if args.dataset in G1_DATASETS:
         results.update({
             'motion_format': 'g1_qpos',
             'g1_vec': np.concatenate(all_g1_vec, axis=0)[:total_num_samples],
@@ -262,7 +267,7 @@ def main(args=None):
     with open(npy_path.replace('.npy', '_len.txt'), 'w') as fw:
         fw.write('\n'.join([str(l) for l in all_lengths]))
 
-    if args.dataset == 'lafan_g1':
+    if args.dataset in G1_DATASETS:
         abs_path = os.path.abspath(out_path)
         print(f'[Done] G1 qpos results are at [{abs_path}]')
         return out_path

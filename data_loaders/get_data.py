@@ -21,8 +21,11 @@ def get_dataset_class(name):
         from data_loaders.humanml.data.dataset import KIT
         return KIT
     elif name == "lafan_g1":
-        from data_loaders.lafan_g1 import LAFANG1
+        from data_loaders.g1 import LAFANG1
         return LAFANG1
+    elif name == "latent_tennis_g1":
+        from data_loaders.g1 import LatentTennisG1
+        return LatentTennisG1
     else:
         raise ValueError(f'Unsupported dataset name [{name}]')
 
@@ -45,7 +48,7 @@ def get_dataset(name, num_frames, split='train', hml_mode='train', abs_path='.',
     if name in ["humanml", "kit"]:
         dataset = DATA(split=split, num_frames=num_frames, mode=hml_mode, abs_path=abs_path, fixed_len=fixed_len, 
                        device=device, autoregressive=autoregressive)
-    elif name == "lafan_g1":
+    elif name in ["lafan_g1", "latent_tennis_g1"]:
         dataset = DATA(split=split, num_frames=num_frames, data_dir=abs_path, fixed_len=fixed_len,
                        pred_len=pred_len, motion_filter=motion_filter,
                        prefix_motion_filter=prefix_motion_filter, prefix_file=prefix_file,

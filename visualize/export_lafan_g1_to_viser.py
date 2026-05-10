@@ -13,7 +13,7 @@ def load_results(results_path):
     motion = np.asarray(results["motion"])
     if motion.ndim != 3 or motion.shape[-1] != 36:
         raise ValueError(
-            "Expected lafan_g1 generated motion with shape "
+            "Expected generated G1 motion with shape "
             f"(num_outputs, frames, 36), got {motion.shape}"
         )
     motion_format = results.get("motion_format", "")
@@ -96,7 +96,7 @@ def export_all(results, output_dir):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Convert lafan_g1 sample.generate results.npy files into qpos .npz "
+            "Convert G1 sample.generate results.npy files into qpos .npz "
             "files accepted by HoloSoma's viser_player.py."
         )
     )
