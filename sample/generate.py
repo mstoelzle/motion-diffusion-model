@@ -275,6 +275,8 @@ def main(args=None):
                 'latent_cond_dim': data.dataset.latent_cond_dim,
                 'context_len': args.context_len,
                 'prefix_sources': all_prefix_sources[:total_num_samples],
+                'latent_embeddings_path': str(getattr(data.dataset, 'path', '')),
+                'latent_data_dir': str(getattr(data.dataset, 'source_data_dir', args.data_dir)),
             })
         else:
             results.update({

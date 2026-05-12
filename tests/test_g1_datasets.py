@@ -451,6 +451,8 @@ def test_latent_conditioned_generate_writes_raw_chunk_results(tmp_path):
     assert results["lengths"].tolist() == [dataset.pred_len, dataset.pred_len]
     assert results["feature_dim"] == dataset.feature_dim
     assert results["latent_cond_dim"] == dataset.latent_cond_dim
+    assert results["latent_embeddings_path"] == str(path)
+    assert "latent_data_dir" in results
 
 
 def test_latent_tennis_g1_uses_g1_vec_schema_from_nested_qpos_files(tmp_path):

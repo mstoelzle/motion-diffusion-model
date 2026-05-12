@@ -4,12 +4,22 @@ from pathlib import Path
 
 import numpy as np
 
+from data_loaders.g1 import latent_motion_results_to_qpos
 
-def load_results(results_path):
+
+def load_results(results_path, latent_embeddings_path="", latent_data_dir=""):
     data = np.load(results_path, allow_pickle=True)
     if isinstance(data, np.lib.npyio.NpzFile):
         raise ValueError(f"Expected a .npy results file, got npz: {results_path}")
     results = data.item() if data.shape == () else data[None][0]
+    motion_format = results.get("motion_format", "")
+    if motion_format == "latent_motion_chunk":
+        results = latent_motion_results_to_qpos(
+            results,
+            embeddings_path=latent_embeddings_path,
+            data_dir=latent_data_dir,
+        )
+
     motion = np.asarray(results["motion"])
     if motion.ndim != 3 or motion.shape[-1] != 36:
         raise ValueError(
@@ -106,9 +116,33 @@ def main():
     parser.add_argument("--sample_idx", default=0, type=int)
     parser.add_argument("--rep_idx", default=0, type=int)
     parser.add_argument("--all", action="store_true", help="Export every sample/repetition.")
+    parser.add_argument(
+        "--latent_embeddings_path",
+        default=None,
+        type=Path,
+        help=(
+            "Optional embeddings NPZ used to reconstruct latent_motion_chunk "
+            "results. Defaults to the path stored in results.npy, or the "
+            "latent_tennis_g1 default."
+        ),
+    )
+    parser.add_argument(
+        "--latent_data_dir",
+        default=None,
+        type=Path,
+        help=(
+            "Optional source qpos directory used to calibrate latent chunks "
+            "to G1 qpos. Defaults to the path stored in results.npy, or the "
+            "latent_tennis_g1 default."
+        ),
+    )
     args = parser.parse_args()
 
-    results = load_results(args.results_path)
+    results = load_results(
+        args.results_path,
+        latent_embeddings_path=args.latent_embeddings_path,
+        latent_data_dir=args.latent_data_dir,
+    )
     if args.all:
         output_dir = args.output_dir
         if not str(output_dir):

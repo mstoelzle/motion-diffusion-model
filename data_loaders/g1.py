@@ -1,4 +1,5 @@
 import fnmatch
+from functools import lru_cache
 import json
 import re
 from pathlib import Path
@@ -72,6 +73,14 @@ def filter_motion_paths(data_dir, motion_filter="*.npz", recursive=False):
     return paths
 
 
+def latent_tennis_source_paths(data_dir=""):
+    data_dir = Path(data_dir or DEFAULT_LATENT_TENNIS_G1_DIR).expanduser()
+    return [
+        path for path in filter_motion_paths(data_dir, "*.npz", recursive=True)
+        if "with_embeddings" not in path.name
+    ]
+
+
 def matches_motion_filter(path, motion_filter):
     patterns = expand_motion_filter(motion_filter)
     return any(fnmatch.fnmatch(Path(path).name, pattern) for pattern in patterns)
@@ -107,6 +116,18 @@ def load_g1_motion_arrays(path):
     if joint_names and joint_names[0] == "root":
         joint_names = joint_names[1:]
     return joint_pos, joint_vel, joint_names, fps
+
+
+def latent_tennis_row_to_source(row_idx, chunk_len, data_dir=""):
+    row_idx = int(row_idx)
+    offset = 0
+    for path in latent_tennis_source_paths(data_dir):
+        joint_pos, joint_vel, joint_names, fps = load_g1_motion_arrays(path)
+        num_windows = joint_pos.shape[0] - int(chunk_len) + 1
+        if row_idx < offset + num_windows:
+            return path, row_idx - offset, joint_pos, joint_vel, joint_names, fps
+        offset += num_windows
+    raise IndexError(f"Latent embedding row {row_idx} is outside [0, {offset})")
 
 
 def finite_difference_root_velocities(joint_pos, fps):
@@ -198,6 +219,174 @@ def g1_vec_to_qpos(vec, fps=50.0, init_xy=None, init_yaw=0.0, clamp_joint_bounds
     root_quaternion = quaternion_normalize(quaternion_raw_multiply(yaw_to_quaternion(yaw), residual_quaternion))
     root_xyz = np.column_stack([xy, root_height])
     return np.concatenate([root_xyz, root_quaternion, joint_angles], axis=-1).astype(np.float32)
+
+
+@lru_cache(maxsize=8)
+def _fit_latent_chunk_to_g1_vec(embeddings_path, data_dir=""):
+    embeddings_path = str(Path(embeddings_path or DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS).expanduser())
+    data_dir = str(Path(data_dir or DEFAULT_LATENT_TENNIS_G1_DIR).expanduser())
+    with np.load(embeddings_path, allow_pickle=False) as data:
+        chunks = np.asarray(data["chunks"], dtype=np.float64)
+
+    num_rows, chunk_len, feature_dim = chunks.shape
+    xtx = np.zeros((feature_dim + 1, feature_dim + 1), dtype=np.float64)
+    xty = np.zeros((feature_dim + 1, 39), dtype=np.float64)
+    row_offset = 0
+    joint_pos_min = []
+    joint_pos_max = []
+    joint_names_ref = None
+    fps_ref = None
+
+    for path in latent_tennis_source_paths(data_dir):
+        joint_pos, joint_vel, joint_names, fps = load_g1_motion_arrays(path)
+        num_windows = joint_pos.shape[0] - chunk_len + 1
+        if num_windows <= 0:
+            continue
+        if joint_names_ref is None:
+            joint_names_ref = joint_names
+        elif joint_names != joint_names_ref:
+            raise ValueError(f"Joint name order differs in {path}")
+        fps_ref = fps if fps_ref is None else fps_ref
+        if fps != fps_ref:
+            raise ValueError(f"FPS differs in {path}: expected {fps_ref}, got {fps}")
+
+        g1_vec = qpos_qvel_to_g1_vec(
+            joint_pos,
+            joint_vel,
+            fps=fps,
+            root_velocity_source="finite_difference",
+        ).astype(np.float64)
+        joint_pos_min.append(joint_pos[:, 7:].min(axis=0))
+        joint_pos_max.append(joint_pos[:, 7:].max(axis=0))
+
+        for start in range(0, num_windows, 512):
+            stop = min(start + 512, num_windows)
+            x = chunks[row_offset + start:row_offset + stop].reshape(-1, feature_dim)
+            y = np.stack([g1_vec[i:i + chunk_len] for i in range(start, stop)], axis=0).reshape(-1, 39)
+            x_aug = np.concatenate([x, np.ones((x.shape[0], 1), dtype=x.dtype)], axis=1)
+            xtx += x_aug.T @ x_aug
+            xty += x_aug.T @ y
+        row_offset += num_windows
+
+    if row_offset != num_rows:
+        raise ValueError(
+            f"Embedding row count {num_rows} does not match source sliding windows {row_offset}"
+        )
+
+    ridge = np.eye(feature_dim + 1, dtype=np.float64) * 1e-6
+    ridge[-1, -1] = 0.0
+    weights = np.linalg.solve(xtx + ridge, xty).astype(np.float32)
+    return {
+        "weights": weights,
+        "chunk_len": chunk_len,
+        "feature_dim": feature_dim,
+        "fps": float(fps_ref or 50.0),
+        "joint_names": joint_names_ref,
+        "joint_pos_min": np.min(joint_pos_min, axis=0).astype(np.float32) if joint_pos_min else None,
+        "joint_pos_max": np.max(joint_pos_max, axis=0).astype(np.float32) if joint_pos_max else None,
+    }
+
+
+def latent_chunks_to_g1_vec(chunks, embeddings_path="", data_dir=""):
+    chunks = np.asarray(chunks, dtype=np.float32)
+    if chunks.ndim == 2:
+        flat = chunks
+        out_shape = (chunks.shape[0], 39)
+    elif chunks.ndim == 3:
+        flat = chunks.reshape(-1, chunks.shape[-1])
+        out_shape = chunks.shape[:-1] + (39,)
+    else:
+        raise ValueError(f"Expected latent chunks shape (T, D) or (N, T, D), got {chunks.shape}")
+
+    calibration = _fit_latent_chunk_to_g1_vec(
+        str(Path(embeddings_path or DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS).expanduser()),
+        str(Path(data_dir or DEFAULT_LATENT_TENNIS_G1_DIR).expanduser()),
+    )
+    if flat.shape[-1] != calibration["feature_dim"]:
+        raise ValueError(
+            f"Expected latent feature dim {calibration['feature_dim']}, got {flat.shape[-1]}"
+        )
+    flat_aug = np.concatenate([flat, np.ones((flat.shape[0], 1), dtype=flat.dtype)], axis=1)
+    return (flat_aug @ calibration["weights"]).reshape(out_shape).astype(np.float32)
+
+
+def parse_latent_prefix_source(prefix_source):
+    match = re.search(r":(\d+)$", str(prefix_source))
+    if not match:
+        raise ValueError(f"Could not parse latent row index from prefix source {prefix_source!r}")
+    return int(match.group(1))
+
+
+def latent_motion_sample_to_qpos(
+    future_chunk,
+    prefix_source,
+    embeddings_path="",
+    data_dir="",
+    context_len=1,
+):
+    embeddings_path = str(Path(embeddings_path or DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS).expanduser())
+    data_dir = str(Path(data_dir or DEFAULT_LATENT_TENNIS_G1_DIR).expanduser())
+    calibration = _fit_latent_chunk_to_g1_vec(embeddings_path, data_dir)
+    row_idx = parse_latent_prefix_source(prefix_source)
+    source_path, start, joint_pos, _joint_vel, _joint_names, fps = latent_tennis_row_to_source(
+        row_idx,
+        calibration["chunk_len"],
+        data_dir,
+    )
+
+    with np.load(embeddings_path, allow_pickle=False) as data:
+        prefix_chunk = np.asarray(data["chunks"][row_idx, :context_len], dtype=np.float32)
+    latent_chunk = np.concatenate([prefix_chunk, np.asarray(future_chunk, dtype=np.float32)], axis=0)
+    g1_vec = latent_chunks_to_g1_vec(latent_chunk, embeddings_path=embeddings_path, data_dir=data_dir)
+    init_qpos = joint_pos[start]
+    return g1_vec_to_qpos(
+        g1_vec,
+        fps=fps,
+        init_xy=init_qpos[:2],
+        init_yaw=quaternion_to_yaw(init_qpos[3:7]),
+        clamp_joint_bounds=(calibration["joint_pos_min"], calibration["joint_pos_max"]),
+    )
+
+
+def latent_motion_results_to_qpos(results, embeddings_path="", data_dir=""):
+    motion = np.asarray(results["motion"], dtype=np.float32)
+    if motion.ndim != 3:
+        raise ValueError(f"Expected latent motion shape (num_outputs, frames, features), got {motion.shape}")
+    embeddings_path = str(
+        Path(
+            embeddings_path
+            or results.get("latent_embeddings_path", "")
+            or DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS
+        ).expanduser()
+    )
+    data_dir = str(Path(data_dir or results.get("latent_data_dir", "") or DEFAULT_LATENT_TENNIS_G1_DIR).expanduser())
+    context_len = int(results.get("context_len", 1))
+    prefix_sources = results.get("prefix_sources")
+    if prefix_sources is None:
+        raise ValueError("Latent motion results must include prefix_sources for qpos reconstruction")
+
+    qpos = np.stack([
+        latent_motion_sample_to_qpos(
+            sample,
+            prefix_sources[i],
+            embeddings_path=embeddings_path,
+            data_dir=data_dir,
+            context_len=context_len,
+        )
+        for i, sample in enumerate(motion)
+    ], axis=0)
+    converted = dict(results)
+    converted["latent_motion_chunk"] = motion
+    converted["motion"] = qpos
+    converted["motion_format"] = "g1_qpos"
+    converted["latent_motion_format"] = "latent_motion_chunk"
+    converted["lengths"] = np.asarray(results.get("lengths", [motion.shape[1]] * len(motion))) + context_len
+    calibration = _fit_latent_chunk_to_g1_vec(embeddings_path, data_dir)
+    converted["fps"] = calibration["fps"]
+    converted["joint_names"] = calibration["joint_names"]
+    converted["latent_embeddings_path"] = embeddings_path
+    converted["latent_data_dir"] = data_dir
+    return converted
 
 
 class G1MotionDataset(torch.utils.data.Dataset):

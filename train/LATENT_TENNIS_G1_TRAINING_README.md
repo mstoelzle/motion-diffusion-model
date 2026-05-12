@@ -113,8 +113,9 @@ python -m sample.generate \
   --guidance_param 1.0
 ```
 
-Latent-conditioned generation writes raw feature chunks to `results.npy`; it
-does not reconstruct G1 qpos. The result dictionary stores:
+Latent-conditioned generation writes raw feature chunks to `results.npy`. The
+result dictionary stores the model-native prediction and the provenance needed
+to derive a G1 qpos visualization:
 
 - `motion_format`: `latent_motion_chunk`
 - `motion`: generated future features with shape `(num_outputs, pred_len, 80)`
@@ -123,6 +124,37 @@ does not reconstruct G1 qpos. The result dictionary stores:
 - `latent_cond_dim`: `16`
 - `context_len`: `1`
 - `prefix_sources`: embedding rows used as current-state/latent sources
+- `latent_embeddings_path`: embedding NPZ used for the sampled prefix rows
+- `latent_data_dir`: source qpos directory when explicitly configured
+
+To export these latent samples for Viser, use the same exporter as the G1 qpos
+datasets. The exporter detects `motion_format: latent_motion_chunk`, restores
+the one-frame prefix from the embedding row, calibrates the 80D chunk features
+against the source qpos files, and writes derived `qpos` NPZ files:
+
+```bash
+python -m visualize.export_lafan_g1_to_viser \
+  --results_path save/my_latent_tennis_g1_latent_DiP/samples_600000_latent/results.npy \
+  --output_dir save/my_latent_tennis_g1_latent_DiP/samples_600000_latent/viser_npz \
+  --all
+```
+
+If the sample file was generated from non-default data locations, pass the
+paths explicitly:
+
+```bash
+python -m visualize.export_lafan_g1_to_viser \
+  --results_path save/my_latent_tennis_g1_latent_DiP/samples_custom/results.npy \
+  --output_dir save/my_latent_tennis_g1_latent_DiP/samples_custom/viser_npz \
+  --latent_embeddings_path /path/to/Random_001-004_Tennis_with_embeddings.npz \
+  --latent_data_dir /path/to/latent_tennis_g1 \
+  --all
+```
+
+The exported qpos contains the prefix/current-state frame followed by the
+predicted future frames, so the default latent tennis export length is 64
+frames. `results.npy` intentionally keeps the raw 80D latent motion chunks as
+the primary sample format; qpos is a derived visualization artifact.
 
 ## Full Dataset Training
 
