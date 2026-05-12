@@ -21,7 +21,8 @@ same root-local `g1_vec` representation.
 ## What Unconstrained Means
 
 `--unconstrained` sets the model conditioning mode to `no_cond`. In this mode,
-the model does not condition on text prompts or action labels.
+the model does not condition on semantic inputs such as text prompts, action
+labels, or latent embeddings.
 
 For the DiP-style prefix model shown below, the model is still conditioned on
 the previous motion context through `--context_len`: those prefix frames are
@@ -31,6 +32,97 @@ sampling still uses prior motion frames as the local physical/state context.
 
 If both `--context_len` and `--pred_len` are left at zero, there is no prior
 motion prefix conditioning either.
+
+## Latent-Conditioned DiP with Current-State Prefix
+
+The pre-windowed latent embedding file:
+
+```text
+dataset/latent_tennis_g1/Random_001-004_Tennis_with_embeddings.npz
+```
+
+contains `states`, `latents`, and `chunks`. For this mode, the model uses the
+existing prefix-completion convention with `--context_len 1`: `chunks[:, 0]` is
+the current robot state/prefix, and the non-overlapping target is
+`chunks[:, 1:]`. Since the chunks have length 64, the default prediction length
+is 63. The raw feature dimension is 80 and the latent condition dimension is
+16 for the default file.
+
+When `--cond_mode latent` is used with `latent_tennis_g1`, these defaults are
+filled in automatically before `args.json` is written:
+
+- `--latent_embeddings_path dataset/latent_tennis_g1/Random_001-004_Tennis_with_embeddings.npz`
+- `--context_len 1`
+- `--pred_len 63`
+
+The model still uses the normal DiP prefix machinery internally. The only new
+semantic condition is the latent embedding; latent conditioning dropout uses
+`--cond_mask_prob`, while the one-frame current-state prefix is always present.
+
+```bash
+python -m train.train_mdm \
+  --save_dir save/my_latent_tennis_g1_latent_DiP \
+  --dataset latent_tennis_g1 \
+  --cond_mode latent \
+  --arch trans_dec \
+  --diffusion_steps 10 \
+  --mask_frames \
+  --use_ema \
+  --train_platform_type TensorboardPlatform \
+  --log_interval 1000
+```
+
+Use `--latent_embeddings_path /path/to/embeddings.npz` to train from another
+pre-windowed file with the same `states`, `latents`, and `chunks` keys.
+If you override lengths, `context_len + pred_len` must stay within the chunk
+length.
+
+### Generate Latent-Conditioned Samples
+
+Generate from a latent-conditioned checkpoint the same way as other MDM
+checkpoints. The model arguments, including `--cond_mode latent`,
+`--context_len`, `--pred_len`, and `--latent_embeddings_path`, are loaded from
+the checkpoint directory's `args.json`.
+
+```bash
+python -m sample.generate \
+  --model_path save/my_latent_tennis_g1_latent_DiP/model000600000.pt \
+  --output_dir save/my_latent_tennis_g1_latent_DiP/samples_600000_latent \
+  --num_samples 6 \
+  --num_repetitions 3 \
+  --motion_length 1.26 \
+  --guidance_param 1.0
+```
+
+For non-autoregressive latent sampling, the output length defaults to the
+trained prediction length, 63 frames. `--motion_length` is only a cap in this
+case. To roll out a longer sequence in repeated 63-frame DiP calls, add
+`--autoregressive` and choose a longer `--motion_length`.
+
+The initial current-state prefix and latent embedding are sampled from rows of
+the embedding NPZ. To use one exact row, pass its row index through
+`--prefix_start` and set `--num_samples 1`:
+
+```bash
+python -m sample.generate \
+  --model_path save/my_latent_tennis_g1_latent_DiP/model000600000.pt \
+  --output_dir save/my_latent_tennis_g1_latent_DiP/samples_row120 \
+  --prefix_start 120 \
+  --num_samples 1 \
+  --num_repetitions 3 \
+  --guidance_param 1.0
+```
+
+Latent-conditioned generation writes raw feature chunks to `results.npy`; it
+does not reconstruct G1 qpos. The result dictionary stores:
+
+- `motion_format`: `latent_motion_chunk`
+- `motion`: generated future features with shape `(num_outputs, pred_len, 80)`
+- `lengths`: generated future lengths, normally 63 for the default file
+- `feature_dim`: `80`
+- `latent_cond_dim`: `16`
+- `context_len`: `1`
+- `prefix_sources`: embedding rows used as current-state/latent sources
 
 ## Full Dataset Training
 
@@ -171,15 +263,20 @@ or broaden the prefix selector.
 
 ## Sample Outputs
 
-For `latent_tennis_g1`, `sample.generate` writes G1 robot samples directly to
-`results.npy` in the output directory. The `motion` array stores reconstructed
-G1 qpos with shape `(num_outputs, frames, 36)`. The file also stores:
+For the qpos-backed `latent_tennis_g1` mode, `sample.generate` writes G1 robot
+samples directly to `results.npy` in the output directory. The `motion` array
+stores reconstructed G1 qpos with shape `(num_outputs, frames, 36)`. The file
+also stores:
 
 - `motion_format`: `g1_qpos`
 - `g1_vec`: generated trajectories before qpos reconstruction
 - `fps`: dataset FPS
 - `joint_names`: G1 joint order
 - `prefix_sources`: dataset windows used as initial context
+
+For `--cond_mode latent`, sample outputs instead use
+`motion_format: latent_motion_chunk` and store raw generated future features in
+`motion`; these are not Viser-ready G1 qpos trajectories.
 
 ## Export for Viser
 

@@ -45,7 +45,9 @@ def load_args_from_model(args, args_to_overwrite):
 
 def apply_rules(args):
     # For prefix completion
-    if args.pred_len == 0:
+    if getattr(args, 'cond_mode', 'auto') != 'latent' and args.context_len is None:
+        args.context_len = 0
+    if getattr(args, 'cond_mode', 'auto') != 'latent' and (args.pred_len is None or args.pred_len == 0):
         args.pred_len = args.context_len
 
     # For target conditioning
@@ -93,6 +95,8 @@ def add_diffusion_options(parser):
 
 def add_model_options(parser):
     group = parser.add_argument_group('model')
+    group.add_argument("--cond_mode", default='auto', choices=['auto', 'no_cond', 'text', 'action', 'latent'], type=str,
+                       help="Semantic conditioning mode. 'auto' preserves the legacy dataset/unconstrained rules.")
     group.add_argument("--arch", default='trans_enc',
                        choices=['trans_enc', 'trans_dec', 'gru'], type=str,
                        help="Architecture types as reported in the paper.")
@@ -128,8 +132,8 @@ def add_model_options(parser):
 
 
     # Prefix completion model
-    group.add_argument("--context_len", default=0, type=int, help="If larger than 0, will do prefix completion.")
-    group.add_argument("--pred_len", default=0, type=int, help="If context_len larger than 0, will do prefix completion. If pred_len will not be specified - will use the same length as context_len")
+    group.add_argument("--context_len", default=None, type=int, help="If larger than 0, will do prefix completion.")
+    group.add_argument("--pred_len", default=None, type=int, help="If context_len larger than 0, will do prefix completion. If pred_len will not be specified - will use the same length as context_len")
     
 
 
@@ -142,6 +146,8 @@ def add_data_options(parser):
                        help="If empty, will use defaults according to the specified dataset.")
     group.add_argument("--motion_filter", default="*.npz", type=str,
                        help="For G1 datasets, comma-separated filename patterns selecting motions to train on.")
+    group.add_argument("--latent_embeddings_path", default=None, type=str,
+                       help="For latent-conditioned datasets, path to an NPZ with states, latents, and chunks.")
 
 
 def add_training_options(parser):
@@ -278,6 +284,9 @@ def add_evaluation_options(parser):
 
 
 def get_cond_mode(args):
+    explicit_cond_mode = getattr(args, 'cond_mode', 'auto')
+    if explicit_cond_mode != 'auto':
+        return explicit_cond_mode
     if args.unconstrained:
         cond_mode = 'no_cond'
     elif args.dataset in ['kit', 'humanml']:

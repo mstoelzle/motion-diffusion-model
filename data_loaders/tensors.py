@@ -54,6 +54,9 @@ def collate(batch):
     
     if 'prefix' in notnone_batches[0]:
         cond['y'].update({'prefix': collate_tensors([b['prefix'] for b in notnone_batches])})
+
+    if 'latent' in notnone_batches[0]:
+        cond['y'].update({'latent': torch.stack([b['latent'] for b in notnone_batches])})
     
     if 'orig_lengths' in notnone_batches[0]:
         cond['y'].update({'orig_lengths': torch.as_tensor([b['orig_lengths'] for b in notnone_batches])})
@@ -91,4 +94,3 @@ def t2m_prefix_collate(batch, pred_len):
         'key': b[7] if len(b) > 7 else None,
     } for b in batch]
     return collate(adapted_batch)
-

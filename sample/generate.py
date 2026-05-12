@@ -11,7 +11,7 @@ from utils.parser_util import generate_args
 from utils.model_util import create_model_and_diffusion, load_saved_model
 from utils import dist_util
 from utils.sampler_util import ClassifierFreeSampleModel, AutoRegressiveSampler
-from data_loaders.get_data import get_dataset_loader
+from data_loaders.get_data import get_dataset_loader, resolve_dataset_defaults
 from data_loaders.humanml.scripts.motion_process import recover_from_ric, get_target_location, sample_goal
 import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
@@ -27,6 +27,7 @@ def main(args=None):
     if args is None:
         # args is None unless this method is called from another function (e.g. during training)
         args = generate_args()
+    args = resolve_dataset_defaults(args)
     fixseed(args.seed)
     out_path = args.output_dir
     n_joints = 22 if args.dataset == 'humanml' else 21
@@ -34,7 +35,10 @@ def main(args=None):
     niter = os.path.basename(args.model_path).replace('model', '').replace('.pt', '')
     if args.dataset in G1_DATASETS:
         fps = 50
-        max_frames = max(args.context_len + args.pred_len, int(args.motion_length * fps))
+        if getattr(args, 'cond_mode', 'auto') == 'latent':
+            max_frames = int(args.motion_length * fps) if args.autoregressive else args.pred_len
+        else:
+            max_frames = max(args.context_len + args.pred_len, int(args.motion_length * fps))
     else:
         max_frames = 196 if args.dataset in ['kit', 'humanml'] else 60
         fps = 12.5 if args.dataset == 'kit' else 20
@@ -208,6 +212,20 @@ def main(args=None):
             print(f"created {len(all_motions) * args.batch_size} samples")
             continue
 
+        if model.data_rep == 'latent_motion_chunk':
+            sample_vec = sample.detach().cpu().squeeze(2).permute(0, 2, 1).numpy()
+            sample_vec = data.dataset.inv_transform(sample_vec)
+            all_motions.append(sample_vec)
+            all_g1_vec.append(sample_vec)
+            all_prefix_sources += model_kwargs['y'].get('db_key', [''] * args.num_samples)
+            if args.unconstrained:
+                all_text += ['unconstrained'] * args.num_samples
+            else:
+                all_text += ['latent'] * args.num_samples
+            all_lengths.append(model_kwargs['y']['lengths'].cpu().numpy())
+            print(f"created {len(all_motions) * args.batch_size} samples")
+            continue
+
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == 'hml_vec':
             n_joints = 22 if sample.shape[1] == 263 else 21
@@ -250,13 +268,22 @@ def main(args=None):
     results = {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
                'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions}
     if args.dataset in G1_DATASETS:
-        results.update({
-            'motion_format': 'g1_qpos',
-            'g1_vec': np.concatenate(all_g1_vec, axis=0)[:total_num_samples],
-            'fps': data.dataset.fps,
-            'joint_names': data.dataset.joint_names,
-            'prefix_sources': all_prefix_sources[:total_num_samples],
-        })
+        if getattr(data.dataset, 'latent_cond_dim', 0):
+            results.update({
+                'motion_format': 'latent_motion_chunk',
+                'feature_dim': data.dataset.feature_dim,
+                'latent_cond_dim': data.dataset.latent_cond_dim,
+                'context_len': args.context_len,
+                'prefix_sources': all_prefix_sources[:total_num_samples],
+            })
+        else:
+            results.update({
+                'motion_format': 'g1_qpos',
+                'g1_vec': np.concatenate(all_g1_vec, axis=0)[:total_num_samples],
+                'fps': data.dataset.fps,
+                'joint_names': data.dataset.joint_names,
+                'prefix_sources': all_prefix_sources[:total_num_samples],
+            })
     np.save(npy_path, results)
     if args.dynamic_text_path != '':
         text_file_content = '\n'.join(['#'.join(s) for s in all_text])
@@ -269,7 +296,10 @@ def main(args=None):
 
     if args.dataset in G1_DATASETS:
         abs_path = os.path.abspath(out_path)
-        print(f'[Done] G1 qpos results are at [{abs_path}]')
+        if getattr(data.dataset, 'latent_cond_dim', 0):
+            print(f'[Done] Latent motion chunk results are at [{abs_path}]')
+        else:
+            print(f'[Done] G1 qpos results are at [{abs_path}]')
         return out_path
 
     print(f"saving visualizations to [{out_path}]...")
@@ -372,6 +402,7 @@ def load_dataset(args, max_frames, n_frames):
                               hml_mode='train' if args.pred_len > 0 else 'text_only',  # We need to sample a prefix from the dataset
                               fixed_len=args.pred_len + args.context_len, pred_len=args.pred_len, device=dist_util.dev(),
                               data_dir=args.data_dir, motion_filter=args.motion_filter,
+                              latent_embeddings_path=getattr(args, 'latent_embeddings_path', ''),
                               prefix_motion_filter=getattr(args, 'prefix_motion_filter', ''),
                               prefix_file=getattr(args, 'prefix_file', ''),
                               prefix_start=getattr(args, 'prefix_start', -1))

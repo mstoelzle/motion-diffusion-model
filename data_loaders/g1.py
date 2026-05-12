@@ -25,6 +25,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_LAFAN_G1_DIR = str(_REPO_ROOT / "dataset" / "lafan_g1")
 DEFAULT_LATENT_TENNIS_G1_DIR = str(_REPO_ROOT / "dataset" / "latent_tennis_g1")
+DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS = str(
+    _REPO_ROOT / "dataset" / "latent_tennis_g1" / "Random_001-004_Tennis_with_embeddings.npz"
+)
 DEFAULT_G1_ROBOT_MODEL = str(_REPO_ROOT / "body_models" / "g1" / "g1_29dof.urdf")
 
 FEATURE_LAYOUT = {
@@ -203,6 +206,32 @@ class G1MotionDataset(torch.utils.data.Dataset):
     metadata_stem = "g1"
     recursive_motion_paths = False
     root_velocity_source = "qvel"
+
+    @classmethod
+    def from_loader_args(
+        cls,
+        split="train",
+        num_frames=60,
+        abs_path="",
+        fixed_len=0,
+        pred_len=0,
+        motion_filter="*.npz",
+        prefix_motion_filter="",
+        prefix_file="",
+        prefix_start=-1,
+        **_kwargs,
+    ):
+        return cls(
+            split=split,
+            num_frames=num_frames,
+            data_dir=abs_path,
+            fixed_len=fixed_len,
+            pred_len=pred_len,
+            motion_filter=motion_filter,
+            prefix_motion_filter=prefix_motion_filter,
+            prefix_file=prefix_file,
+            prefix_start=prefix_start,
+        )
 
     def __init__(
         self,
@@ -415,5 +444,171 @@ class LatentTennisG1(G1MotionDataset):
     recursive_motion_paths = True
     root_velocity_source = "finite_difference"
 
+    @classmethod
+    def from_loader_args(
+        cls,
+        split="train",
+        num_frames=60,
+        abs_path="",
+        fixed_len=0,
+        pred_len=0,
+        motion_filter="*.npz",
+        prefix_motion_filter="",
+        prefix_file="",
+        prefix_start=-1,
+        latent_embeddings_path="",
+        **kwargs,
+    ):
+        if latent_embeddings_path:
+            return LatentConditionedChunkDataset(
+                split=split,
+                num_frames=num_frames,
+                latent_embeddings_path=latent_embeddings_path,
+                fixed_len=fixed_len,
+                pred_len=pred_len,
+                prefix_start=prefix_start,
+            )
+        return super().from_loader_args(
+            split=split,
+            num_frames=num_frames,
+            abs_path=abs_path,
+            fixed_len=fixed_len,
+            pred_len=pred_len,
+            motion_filter=motion_filter,
+            prefix_motion_filter=prefix_motion_filter,
+            prefix_file=prefix_file,
+            prefix_start=prefix_start,
+            **kwargs,
+        )
+
     def parse_action(self, path):
         return parse_latent_tennis_action(path.name)
+
+
+class LatentConditionedChunkDataset(torch.utils.data.Dataset):
+    dataname = "latent_tennis_g1"
+    metadata_stem = "latent_tennis_g1"
+    default_embeddings_path = DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS
+
+    def __init__(
+        self,
+        split="train",
+        num_frames=0,
+        latent_embeddings_path="",
+        fixed_len=0,
+        pred_len=0,
+        prefix_start=-1,
+        **_kwargs,
+    ):
+        super().__init__()
+        self.split = split
+        self.path = Path(latent_embeddings_path or self.default_embeddings_path).expanduser()
+        with np.load(self.path, allow_pickle=False) as data:
+            self.states = np.asarray(data["states"], dtype=np.float32)
+            self.latents = np.asarray(data["latents"], dtype=np.float32)
+            self.chunks = np.asarray(data["chunks"], dtype=np.float32)
+
+        if self.states.ndim != 2:
+            raise ValueError(f"Expected states shape (N, D), got {self.states.shape}")
+        if self.latents.ndim != 2:
+            raise ValueError(f"Expected latents shape (N, Z), got {self.latents.shape}")
+        if self.chunks.ndim != 3:
+            raise ValueError(f"Expected chunks shape (N, T, D), got {self.chunks.shape}")
+        if self.states.shape[0] != self.latents.shape[0] or self.states.shape[0] != self.chunks.shape[0]:
+            raise ValueError(
+                f"states, latents, and chunks must have the same row count; got "
+                f"{self.states.shape[0]}, {self.latents.shape[0]}, {self.chunks.shape[0]}"
+            )
+        if self.states.shape[1] != self.chunks.shape[2]:
+            raise ValueError(f"State dim {self.states.shape[1]} does not match chunk dim {self.chunks.shape[2]}")
+        if not np.allclose(self.states, self.chunks[:, 0, :], atol=1e-6):
+            raise ValueError(f"states must match chunks[:, 0, :] in [{self.path}]")
+
+        self.chunk_len = self.chunks.shape[1]
+        self.feature_dim = self.chunks.shape[2]
+        self.latent_cond_dim = self.latents.shape[1]
+        self.njoints = self.feature_dim
+        self.nfeats = 1
+        self.num_actions = 1
+        self.fps = 50
+
+        if pred_len is None or pred_len <= 0:
+            self.context_len = 1
+            self.pred_len = self.chunk_len - self.context_len
+            self.fixed_len = self.chunk_len
+        else:
+            self.pred_len = int(pred_len)
+            self.fixed_len = int(fixed_len or num_frames or self.pred_len + 1)
+            self.context_len = self.fixed_len - self.pred_len
+        if self.context_len <= 0:
+            raise ValueError(f"context_len must be positive for latent chunk conditioning, got {self.context_len}")
+        if self.fixed_len > self.chunk_len:
+            raise ValueError(f"fixed_len={self.fixed_len} exceeds latent chunk length {self.chunk_len}")
+        if self.context_len + self.pred_len > self.chunk_len:
+            raise ValueError(
+                f"context_len + pred_len must be <= {self.chunk_len}, got "
+                f"{self.context_len} + {self.pred_len}"
+            )
+
+        flat_chunks = self.chunks.reshape(-1, self.feature_dim)
+        self.mean = flat_chunks.mean(axis=0).astype(np.float32)
+        self.std = np.maximum(flat_chunks.std(axis=0), 1e-6).astype(np.float32)
+        self.latent_mean = self.latents.mean(axis=0).astype(np.float32)
+        self.latent_std = np.maximum(self.latents.std(axis=0), 1e-6).astype(np.float32)
+        self.prefix_start = int(prefix_start)
+        if self.prefix_start >= 0:
+            if self.prefix_start >= self.chunks.shape[0]:
+                raise ValueError(
+                    f"Requested prefix_start={self.prefix_start}, but valid latent row indices are "
+                    f"0..{self.chunks.shape[0] - 1}"
+                )
+            self.index = [self.prefix_start]
+        else:
+            self.index = list(range(self.chunks.shape[0]))
+
+    def __len__(self):
+        return len(self.index)
+
+    def transform(self, data):
+        return (data - self.mean) / self.std
+
+    def inv_transform(self, data):
+        return data * self.std + self.mean
+
+    def transform_latent(self, data):
+        return (data - self.latent_mean) / self.latent_std
+
+    def __getitem__(self, item):
+        row_idx = self.index[item]
+        window = self.transform(self.chunks[row_idx, :self.fixed_len]).astype(np.float32)
+        tensor = torch.from_numpy(window.T).float().unsqueeze(1)
+        latent = torch.from_numpy(self.transform_latent(self.latents[row_idx]).astype(np.float32)).float()
+        return {
+            "prefix": tensor[..., :self.context_len],
+            "inp": tensor[..., self.context_len:self.context_len + self.pred_len],
+            "latent": latent,
+            "lengths": self.pred_len,
+            "orig_lengths": self.fixed_len,
+            "key": f"{self.path.stem}:{row_idx}",
+        }
+
+    def save_metadata(self, save_dir):
+        save_dir = Path(save_dir)
+        np.save(save_dir / f"{self.metadata_stem}_mean.npy", self.mean)
+        np.save(save_dir / f"{self.metadata_stem}_std.npy", self.std)
+        np.save(save_dir / f"{self.metadata_stem}_latent_mean.npy", self.latent_mean)
+        np.save(save_dir / f"{self.metadata_stem}_latent_std.npy", self.latent_std)
+        metadata = {
+            "data_dir": str(self.path.parent),
+            "latent_embeddings_path": str(self.path),
+            "num_windows": len(self),
+            "chunk_len": self.chunk_len,
+            "context_len": self.context_len,
+            "pred_len": self.pred_len,
+            "feature_dim": self.feature_dim,
+            "latent_cond_dim": self.latent_cond_dim,
+            "motion_format": "latent_motion_chunk",
+            "conditioning_note": "no_cond means no semantic conditioning; prefix context may still condition the model",
+        }
+        with open(save_dir / f"{self.metadata_stem}_metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)

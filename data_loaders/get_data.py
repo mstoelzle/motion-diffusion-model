@@ -1,8 +1,44 @@
 from functools import partial
 
+import numpy as np
 from torch.utils.data import DataLoader
 from data_loaders.tensors import collate as all_collate
 from data_loaders.tensors import t2m_collate, t2m_prefix_collate
+
+
+def resolve_dataset_defaults(args):
+    cond_mode = getattr(args, "cond_mode", "auto")
+    if cond_mode == "latent":
+        if args.dataset != "latent_tennis_g1":
+            raise ValueError("--cond_mode latent is currently only wired for latent_tennis_g1")
+        from data_loaders.g1 import DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS
+
+        if not getattr(args, "latent_embeddings_path", None):
+            args.latent_embeddings_path = DEFAULT_LATENT_TENNIS_G1_EMBEDDINGS
+        with np.load(args.latent_embeddings_path, allow_pickle=False) as data:
+            chunk_len = data["chunks"].shape[1]
+        if getattr(args, "context_len", None) is None:
+            args.context_len = 1
+        if getattr(args, "pred_len", None) is None:
+            args.pred_len = chunk_len - args.context_len
+        if args.context_len <= 0:
+            raise ValueError(f"context_len must be positive for latent conditioning, got {args.context_len}")
+        if args.pred_len <= 0:
+            raise ValueError(f"pred_len must be positive for latent conditioning, got {args.pred_len}")
+        if args.context_len + args.pred_len > chunk_len:
+            raise ValueError(
+                f"context_len + pred_len must be <= latent chunk length {chunk_len}, "
+                f"got context_len={args.context_len}, pred_len={args.pred_len}"
+            )
+        return args
+
+    if getattr(args, "context_len", None) is None:
+        args.context_len = 0
+    if getattr(args, "pred_len", None) is None or args.pred_len == 0:
+        args.pred_len = args.context_len
+    if getattr(args, "latent_embeddings_path", None) is None:
+        args.latent_embeddings_path = ""
+    return args
 
 def get_dataset_class(name):
     if name == "amass":
@@ -30,6 +66,7 @@ def get_dataset_class(name):
         raise ValueError(f'Unsupported dataset name [{name}]')
 
 def get_collate_fn(name, hml_mode='train', pred_len=0, batch_size=1):
+    pred_len = 0 if pred_len is None else pred_len
     if hml_mode == 'gt':
         from data_loaders.humanml.data.dataset import collate_fn as t2m_eval_collate
         return t2m_eval_collate
@@ -43,16 +80,24 @@ def get_collate_fn(name, hml_mode='train', pred_len=0, batch_size=1):
 
 def get_dataset(name, num_frames, split='train', hml_mode='train', abs_path='.', fixed_len=0,
                 device=None, autoregressive=False, cache_path=None, pred_len=0, motion_filter='*.npz',
-                prefix_motion_filter='', prefix_file='', prefix_start=-1):
+                prefix_motion_filter='', prefix_file='', prefix_start=-1, latent_embeddings_path=''):
     DATA = get_dataset_class(name)
+    if hasattr(DATA, "from_loader_args"):
+        return DATA.from_loader_args(
+            split=split,
+            num_frames=num_frames,
+            abs_path=abs_path,
+            fixed_len=fixed_len,
+            pred_len=pred_len,
+            motion_filter=motion_filter,
+            prefix_motion_filter=prefix_motion_filter,
+            prefix_file=prefix_file,
+            prefix_start=prefix_start,
+            latent_embeddings_path=latent_embeddings_path,
+        )
     if name in ["humanml", "kit"]:
         dataset = DATA(split=split, num_frames=num_frames, mode=hml_mode, abs_path=abs_path, fixed_len=fixed_len, 
                        device=device, autoregressive=autoregressive)
-    elif name in ["lafan_g1", "latent_tennis_g1"]:
-        dataset = DATA(split=split, num_frames=num_frames, data_dir=abs_path, fixed_len=fixed_len,
-                       pred_len=pred_len, motion_filter=motion_filter,
-                       prefix_motion_filter=prefix_motion_filter, prefix_file=prefix_file,
-                       prefix_start=prefix_start)
     else:
         dataset = DATA(split=split, num_frames=num_frames)
     return dataset
@@ -60,11 +105,13 @@ def get_dataset(name, num_frames, split='train', hml_mode='train', abs_path='.',
 
 def get_dataset_loader(name, batch_size, num_frames, split='train', hml_mode='train', fixed_len=0, pred_len=0,
                        device=None, autoregressive=False, num_workers=8, data_dir='', motion_filter='*.npz',
-                       prefix_motion_filter='', prefix_file='', prefix_start=-1):
+                       prefix_motion_filter='', prefix_file='', prefix_start=-1, latent_embeddings_path=''):
+    pred_len = 0 if pred_len is None else pred_len
     dataset = get_dataset(name, num_frames, split=split, hml_mode=hml_mode, fixed_len=fixed_len,
                 device=device, autoregressive=autoregressive, abs_path=data_dir, pred_len=pred_len,
                 motion_filter=motion_filter, prefix_motion_filter=prefix_motion_filter,
-                prefix_file=prefix_file, prefix_start=prefix_start)
+                prefix_file=prefix_file, prefix_start=prefix_start,
+                latent_embeddings_path=latent_embeddings_path)
     
     collate = get_collate_fn(name, hml_mode, pred_len, batch_size)
 

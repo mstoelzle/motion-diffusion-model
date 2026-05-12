@@ -51,6 +51,8 @@ def get_model_args(args, data):
         data_rep = 'g1_vec'
         njoints = data.dataset.feature_dim
         nfeats = 1
+        if cond_mode == 'latent':
+            data_rep = 'latent_motion_chunk'
 
     # Compatibility with old models
     if not hasattr(args, 'pred_len'):
@@ -71,6 +73,7 @@ def get_model_args(args, data):
             'text_encoder_type': args.text_encoder_type,
             'pos_embed_max_len': args.pos_embed_max_len, 'mask_frames': args.mask_frames,
             'pred_len': args.pred_len, 'context_len': args.context_len, 'emb_policy': emb_policy,
+            'latent_cond_dim': getattr(data.dataset, 'latent_cond_dim', 0),
             'all_goal_joint_names': all_goal_joint_names, 'multi_target_cond': multi_target_cond, 'multi_encoder_type': multi_encoder_type, 'target_enc_layers': target_enc_layers,
             }
 
@@ -101,6 +104,8 @@ def create_gaussian_diffusion(args):
         data_rep = 'hml_vec'
     elif args.dataset in ['lafan_g1', 'latent_tennis_g1']:
         data_rep = 'g1_vec'
+        if get_cond_mode(args) == 'latent':
+            data_rep = 'latent_motion_chunk'
         if args.lambda_rcxyz or args.lambda_fc or lambda_target_loc:
             print(f'{args.dataset} does not support SMPL/HumanML-specific geometric losses; disabling them.')
         args.lambda_rcxyz = 0.0

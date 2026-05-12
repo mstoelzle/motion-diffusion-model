@@ -9,7 +9,7 @@ from utils.fixseed import fixseed
 from utils.parser_util import train_args
 from utils import dist_util
 from train.training_loop import TrainLoop
-from data_loaders.get_data import get_dataset_loader
+from data_loaders.get_data import get_dataset_loader, resolve_dataset_defaults
 from utils.model_util import create_model_and_diffusion
 from train.train_platforms import WandBPlatform, ClearmlPlatform, TensorboardPlatform, NoPlatform  # required for the eval operation
 
@@ -19,6 +19,7 @@ if torch.cuda.is_available():
 
 def main():
     args = train_args()
+    args = resolve_dataset_defaults(args)
     fixseed(args.seed)
 
     if args.save_dir is None:
@@ -47,7 +48,8 @@ def main():
                               device=dist_util.dev(),
                               num_workers=args.num_workers,
                               data_dir=args.data_dir,
-                              motion_filter=args.motion_filter,)
+                              motion_filter=args.motion_filter,
+                              latent_embeddings_path=args.latent_embeddings_path,)
     if hasattr(data.dataset, "save_metadata"):
         data.dataset.save_metadata(args.save_dir)
 

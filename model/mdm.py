@@ -45,6 +45,7 @@ class MDM(nn.Module):
 
         self.cond_mode = kargs.get('cond_mode', 'no_cond')
         self.cond_mask_prob = kargs.get('cond_mask_prob', 0.)
+        self.latent_cond_dim = kargs.get('latent_cond_dim', 0)
         self.mask_frames = kargs.get('mask_frames', False)
         self.arch = arch
         self.text_encoder_type = kargs.get('text_encoder_type', 'clip')
@@ -127,6 +128,11 @@ class MDM(nn.Module):
             if 'action' in self.cond_mode:
                 self.embed_action = EmbedAction(self.num_actions, self.latent_dim)
                 print('EMBED ACTION')
+            if 'latent' in self.cond_mode:
+                if self.latent_cond_dim <= 0:
+                    raise ValueError("latent_cond_dim must be positive when cond_mode includes latent")
+                self.embed_latent = nn.Linear(self.latent_cond_dim, self.latent_dim)
+                print('EMBED LATENT')
 
         self.output_process = OutputProcess(self.data_rep, self.input_feats, self.latent_dim, self.njoints,
                                             self.nfeats)
@@ -223,6 +229,9 @@ class MDM(nn.Module):
         if 'action' in self.cond_mode:
             action_emb = self.embed_action(y['action'])
             emb = time_emb + self.mask_cond(action_emb, force_mask=force_mask)
+        if 'latent' in self.cond_mode:
+            latent_emb = self.embed_latent(y['latent']).unsqueeze(0)
+            emb = time_emb + self.mask_cond(latent_emb, force_mask=force_mask)
         if self.cond_mode == 'no_cond': 
             # unconstrained
             emb = time_emb
@@ -345,7 +354,7 @@ class InputProcess(nn.Module):
         bs, njoints, nfeats, nframes = x.shape
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
 
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec', 'latent_motion_chunk']:
             x = self.poseEmbedding(x)  # [seqlen, bs, d]
             return x
         elif self.data_rep == 'rot_vel':
@@ -372,7 +381,7 @@ class OutputProcess(nn.Module):
 
     def forward(self, output):
         nframes, bs, d = output.shape
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'g1_vec', 'latent_motion_chunk']:
             output = self.poseFinal(output)  # [seqlen, bs, 150]
         elif self.data_rep == 'rot_vel':
             first_pose = output[[0]]  # [1, bs, d]
