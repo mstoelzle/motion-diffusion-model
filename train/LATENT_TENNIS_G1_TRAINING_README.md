@@ -156,6 +156,40 @@ predicted future frames, so the default latent tennis export length is 64
 frames. `results.npy` intentionally keeps the raw 80D latent motion chunks as
 the primary sample format; qpos is a derived visualization artifact.
 
+### Latent Interpolation Validation
+
+To visually inspect whether the latent embedding affects generated motion,
+generate a controlled interpolation between two embedding rows:
+
+```bash
+python -m sample.generate_latent_interpolation \
+  --model_path save/my_latent_tennis_g1_latent_DiP/model000600000.pt \
+  --output_dir save/my_latent_tennis_g1_latent_DiP/interp_rows_120_880 \
+  --row_a 120 \
+  --row_b 880 \
+  --export_viser
+```
+
+The script fixes the current-state prefix to `row_a` by default, interpolates
+between normalized latents at alphas `0,0.25,0.5,0.75,1`, and saves raw
+`latent_motion_chunk` samples in `results.npy`. With `--export_viser`, it also
+writes derived qpos files under `viser_npz/`. Endpoint dataset futures are
+saved to `endpoint_references.npy` and, when Viser export is enabled, to
+`viser_npz_references/`.
+
+Useful overrides:
+
+- `--prefix_row ROW`: use a different shared current-state prefix
+- `--alphas 0,0.1,0.2,0.5,1`: customize interpolation points
+- `--num_repetitions N`: repeat the same interpolation batch
+- `--no-fixed_noise`: let each alpha use independent diffusion noise
+- `--skip_endpoint_references`: skip the endpoint reference sidecar
+
+The cleanest validation signal is smooth, directional motion change across
+alpha values while the first/current state stays fixed. If the outputs change
+randomly under fixed prefix and fixed noise, the model may not be relying
+strongly on the latent embedding.
+
 ## Full Dataset Training
 
 Run from the `motion-diffusion-model` repo root:

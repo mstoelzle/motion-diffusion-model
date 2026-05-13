@@ -19,6 +19,11 @@ from data_loaders.g1 import (
 from data_loaders.get_data import get_dataset, resolve_dataset_defaults
 from data_loaders.tensors import collate
 from sample.generate import main as generate
+from sample.generate_latent_interpolation import (
+    build_interpolation_batch,
+    generate_latent_interpolation,
+    interpolate_normalized_latents,
+)
 from utils.model_util import create_model_and_diffusion
 from utils.rotation_conversions_np import quaternion_to_yaw
 
@@ -453,6 +458,108 @@ def test_latent_conditioned_generate_writes_raw_chunk_results(tmp_path):
     assert results["latent_cond_dim"] == dataset.latent_cond_dim
     assert results["latent_embeddings_path"] == str(path)
     assert "latent_data_dir" in results
+
+
+def test_latent_interpolation_uses_normalized_linear_space(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _write_embedding_chunks(path, num_rows=3, chunk_len=6, feature_dim=5, latent_dim=3)
+    dataset = LatentConditionedChunkDataset(latent_embeddings_path=path)
+
+    latents = interpolate_normalized_latents(dataset, row_a=0, row_b=2, alphas=[0.0, 0.5, 1.0])
+    latent_a = dataset.transform_latent(dataset.latents[0])
+    latent_b = dataset.transform_latent(dataset.latents[2])
+
+    assert np.allclose(latents[0], latent_a)
+    assert np.allclose(latents[1], 0.5 * latent_a + 0.5 * latent_b)
+    assert np.allclose(latents[2], latent_b)
+
+
+def test_latent_interpolation_batch_shares_prefix_and_varies_latent(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _, _, chunks = _write_embedding_chunks(path, num_rows=4, chunk_len=6, feature_dim=5, latent_dim=3)
+    dataset = LatentConditionedChunkDataset(latent_embeddings_path=path)
+
+    motion, cond = build_interpolation_batch(
+        dataset,
+        row_a=0,
+        row_b=3,
+        prefix_row=2,
+        alphas=[0.0, 0.5, 1.0],
+    )
+    denorm_prefix = dataset.inv_transform(cond["y"]["prefix"].squeeze(2).permute(0, 2, 1).numpy())
+
+    assert motion.shape == (3, dataset.feature_dim, 1, dataset.pred_len)
+    assert cond["y"]["lengths"].tolist() == [dataset.pred_len] * 3
+    assert np.allclose(denorm_prefix, np.repeat(chunks[2:3, :dataset.context_len], 3, axis=0))
+    assert cond["y"]["db_key"] == [f"{path.stem}:2"] * 3
+    assert not torch.allclose(cond["y"]["latent"][0], cond["y"]["latent"][-1])
+
+
+def test_latent_interpolation_generate_writes_results_metadata(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _write_embedding_chunks(path, num_rows=4, chunk_len=6, feature_dim=5, latent_dim=3)
+    dataset = LatentConditionedChunkDataset(latent_embeddings_path=path)
+    loader = SimpleNamespace(dataset=dataset)
+    args = SimpleNamespace(
+        seed=10,
+        cuda=False,
+        device=-1,
+        dataset="latent_tennis_g1",
+        data_dir="",
+        motion_filter="*.npz",
+        latent_embeddings_path=str(path),
+        save_dir=str(tmp_path),
+        model_path=str(tmp_path / "model000000000.pt"),
+        output_dir=str(tmp_path / "latent_interpolation"),
+        row_a=0,
+        row_b=3,
+        prefix_row=2,
+        alphas=[0.0, 0.5, 1.0],
+        num_repetitions=1,
+        guidance_param=1.0,
+        fixed_noise=True,
+        export_viser=False,
+        skip_endpoint_references=False,
+        latent_dim=16,
+        layers=1,
+        cond_mask_prob=0.1,
+        arch="trans_dec",
+        emb_trans_dec=False,
+        text_encoder_type="clip",
+        pos_embed_max_len=32,
+        mask_frames=True,
+        pred_len=dataset.pred_len,
+        context_len=dataset.context_len,
+        cond_mode="latent",
+        diffusion_steps=2,
+        noise_schedule="cosine",
+        sigma_small=True,
+        lambda_vel=0.0,
+        lambda_rcxyz=0.0,
+        lambda_fc=0.0,
+        lambda_target_loc=0.0,
+        unconstrained=False,
+        use_ema=False,
+    )
+    model, _ = create_model_and_diffusion(args, loader)
+    torch.save(model.state_dict(), args.model_path)
+
+    out_dir = generate_latent_interpolation(args)
+    results = np.load(tmp_path / "latent_interpolation" / "results.npy", allow_pickle=True).item()
+    references = np.load(tmp_path / "latent_interpolation" / "endpoint_references.npy", allow_pickle=True).item()
+
+    assert out_dir == args.output_dir
+    assert results["motion_format"] == "latent_motion_chunk"
+    assert results["motion"].shape == (3, dataset.pred_len, dataset.feature_dim)
+    assert results["row_a"] == 0
+    assert results["row_b"] == 3
+    assert results["prefix_row"] == 2
+    assert results["latent_interpolation_space"] == "normalized_linear"
+    assert bool(results["fixed_noise"])
+    assert results["alpha_values"].tolist() == [0.0, 0.5, 1.0]
+    assert results["prefix_sources"] == [f"{path.stem}:2"] * 3
+    assert references["motion"].shape == (2, dataset.pred_len, dataset.feature_dim)
+    assert references["prefix_sources"] == [f"{path.stem}:0", f"{path.stem}:3"]
 
 
 def test_latent_tennis_g1_uses_g1_vec_schema_from_nested_qpos_files(tmp_path):
