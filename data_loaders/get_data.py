@@ -21,8 +21,8 @@ def resolve_dataset_defaults(args):
             args.context_len = 1
         if getattr(args, "pred_len", None) is None:
             args.pred_len = chunk_len - args.context_len
-        if args.context_len <= 0:
-            raise ValueError(f"context_len must be positive for latent conditioning, got {args.context_len}")
+        if args.context_len < 0:
+            raise ValueError(f"context_len must be non-negative for latent conditioning, got {args.context_len}")
         if args.pred_len <= 0:
             raise ValueError(f"pred_len must be positive for latent conditioning, got {args.pred_len}")
         if args.context_len + args.pred_len > chunk_len:

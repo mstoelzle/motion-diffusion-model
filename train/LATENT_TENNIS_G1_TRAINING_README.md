@@ -77,6 +77,27 @@ pre-windowed file with the same `states`, `latents`, and `chunks` keys.
 If you override lengths, `context_len + pred_len` must stay within the chunk
 length.
 
+To train with latent conditioning only, without the one-frame current-state
+prefix, set `--context_len 0` explicitly and predict the full 64-frame chunk:
+
+```bash
+python -m train.train_mdm \
+  --save_dir save/my_latent_tennis_g1_latent_DiP_ctx0 \
+  --dataset latent_tennis_g1 \
+  --cond_mode latent \
+  --context_len 0 \
+  --pred_len 64 \
+  --arch trans_dec \
+  --diffusion_steps 10 \
+  --mask_frames \
+  --use_ema \
+  --train_platform_type TensorboardPlatform \
+  --log_interval 1000
+```
+
+The default remains `context_len=1`, `pred_len=63` when these values are not
+specified.
+
 ### Generate Latent-Conditioned Samples
 
 Generate from a latent-conditioned checkpoint the same way as other MDM

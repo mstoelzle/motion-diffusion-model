@@ -290,6 +290,23 @@ def test_resolve_dataset_defaults_keeps_latent_defaults_in_data_layer(tmp_path):
     assert args.pred_len == 5
 
 
+def test_resolve_dataset_defaults_allows_explicit_zero_latent_context(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _write_embedding_chunks(path, chunk_len=6)
+    args = SimpleNamespace(
+        dataset="latent_tennis_g1",
+        cond_mode="latent",
+        latent_embeddings_path=str(path),
+        context_len=0,
+        pred_len=6,
+    )
+
+    resolve_dataset_defaults(args)
+
+    assert args.context_len == 0
+    assert args.pred_len == 6
+
+
 def test_resolve_dataset_defaults_preserves_legacy_prefix_rule():
     args = SimpleNamespace(
         dataset="latent_tennis_g1",
@@ -312,6 +329,22 @@ def test_latent_conditioned_chunk_dataset_rejects_too_long_window(tmp_path):
 
     with pytest.raises(ValueError, match="exceeds latent chunk length"):
         LatentConditionedChunkDataset(latent_embeddings_path=path, fixed_len=7, pred_len=6)
+
+
+def test_latent_conditioned_chunk_dataset_allows_zero_state_prefix(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _, _, chunks = _write_embedding_chunks(path, chunk_len=6)
+
+    dataset = LatentConditionedChunkDataset(latent_embeddings_path=path, fixed_len=6, pred_len=6)
+
+    assert dataset.context_len == 0
+    assert dataset.pred_len == 6
+    assert dataset.fixed_len == 6
+    item = dataset[0]
+    assert item["prefix"].shape == (chunks.shape[-1], 1, 0)
+    assert item["inp"].shape == (chunks.shape[-1], 1, 6)
+    denorm_target = dataset.inv_transform(item["inp"].squeeze(1).T.numpy())
+    assert np.allclose(denorm_target, chunks[0])
 
 
 def test_latent_conditioned_collate_includes_prefix_and_latent(tmp_path):
@@ -361,6 +394,40 @@ def test_latent_conditioned_mdm_forward_smoke(tmp_path):
     path = tmp_path / "embeddings.npz"
     _write_embedding_chunks(path, num_rows=3, chunk_len=6, feature_dim=5, latent_dim=3)
     dataset = LatentConditionedChunkDataset(latent_embeddings_path=path)
+    motion, cond = collate([dataset[0], dataset[1]])
+    loader = SimpleNamespace(dataset=dataset)
+    args = SimpleNamespace(
+        dataset="latent_tennis_g1",
+        latent_dim=16,
+        layers=1,
+        cond_mask_prob=0.1,
+        arch="trans_dec",
+        emb_trans_dec=False,
+        text_encoder_type="clip",
+        pos_embed_max_len=32,
+        mask_frames=True,
+        pred_len=dataset.pred_len,
+        context_len=dataset.context_len,
+        cond_mode="latent",
+        diffusion_steps=10,
+        noise_schedule="cosine",
+        sigma_small=True,
+        lambda_vel=0.0,
+        lambda_rcxyz=0.0,
+        lambda_fc=0.0,
+        lambda_target_loc=0.0,
+    )
+
+    model, _ = create_model_and_diffusion(args, loader)
+    output = model(motion, torch.zeros(motion.shape[0], dtype=torch.long), cond["y"])
+
+    assert output.shape == motion.shape
+
+
+def test_latent_conditioned_mdm_forward_smoke_without_prefix(tmp_path):
+    path = tmp_path / "embeddings.npz"
+    _write_embedding_chunks(path, num_rows=3, chunk_len=6, feature_dim=5, latent_dim=3)
+    dataset = LatentConditionedChunkDataset(latent_embeddings_path=path, fixed_len=6, pred_len=6)
     motion, cond = collate([dataset[0], dataset[1]])
     loader = SimpleNamespace(dataset=dataset)
     args = SimpleNamespace(

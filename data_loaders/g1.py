@@ -729,8 +729,8 @@ class LatentConditionedChunkDataset(torch.utils.data.Dataset):
             self.pred_len = int(pred_len)
             self.fixed_len = int(fixed_len or num_frames or self.pred_len + 1)
             self.context_len = self.fixed_len - self.pred_len
-        if self.context_len <= 0:
-            raise ValueError(f"context_len must be positive for latent chunk conditioning, got {self.context_len}")
+        if self.context_len < 0:
+            raise ValueError(f"context_len must be non-negative for latent chunk conditioning, got {self.context_len}")
         if self.fixed_len > self.chunk_len:
             raise ValueError(f"fixed_len={self.fixed_len} exceeds latent chunk length {self.chunk_len}")
         if self.context_len + self.pred_len > self.chunk_len:
